@@ -1,5 +1,4 @@
 import os
-import sys
 import io
 import re
 import json
@@ -29,29 +28,96 @@ DATA_DIR = Path(__file__).parent / "sampled_1150"
 OUTPUT_DIR = Path(__file__).parent / "labeled_1150"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-# System prompt from markdown file
-SYSTEM_PROMPT_PATH = Path(__file__).parent.parent.parent / "sysPrompts" / "TR.md" ## ENG.md for english
+# System prompt (scene description)
+SYSTEM_PROMPT_PATH = Path(__file__).parent.parent.parent / "sysPrompts" / "TR.md"
 if SYSTEM_PROMPT_PATH.exists():
     SYSTEM_PROMPT = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
 else:
     raise FileNotFoundError(f"System prompt not found: {SYSTEM_PROMPT_PATH}")
 
+# System prompt (haptic Q&A generation)
+HAPTIC_SYSTEM_PROMPT = """Sen görme engelli bireyler için uzman bir rehber asistanısın.
+Verilen sahne açıklamasına dayanarak, 5-8 soru-cevap çifti içeren gerçekçi bir çok turlu konuşma üret.
+
+SORU TİPLERİ — Aşağıdaki tiplerden karıştırarak seç:
+
+1. NESNEYE ULAŞMA (haptic)
+   Soru: "X'e nasıl ulaşırım?" veya "X nerede?"
+   Cevap: "Sana [referans]'a göre tarif edeyim:\\n[adım] → [adım] → [ne hissedeceksin].\\nYönleri karıştırırsan tekrar yaz; başka bir nesneye göre de tarif edebilirim."
+   Not: Yalnızca elle ulaşılabilir nesneler için üret.
+
+2. GÜVENLİK
+   Soru: "Dikkat etmem gereken bir şey var mı?" / "Yolum açık mı?" / "Tehlike var mı?"
+   Cevap (tehlike varsa): Nesneyi + konumunu belirt.
+   Cevap (tehlike yoksa): "Önünüzdeki alan açık görünüyor, yine de bastonunuzu kullanın."
+
+3. YÖNSELLİK
+   Soru: "Sağımda ne var?" / "Solumda ne var?" / "Tam önümde ne var?"
+   Cevap: O yöndeki nesneleri konum + materyal + işlev ile tarif et.
+
+4. ZEMİN
+   Soru: "Zemin nasıl?" / "Kaygan mı?" / "Zeminde engel var mı?"
+   Cevap: Materyal, doku, kot değişimi veya ıslaklık bilgisi.
+
+5. ÜST ENGEL
+   Soru: "Başım bir şeye çarpar mı?" / "Üstte engel var mı?"
+   Cevap (engel varsa): Nesneyi + hizasını belirt.
+   Cevap (yoksa): "Baş hizasında belirgin bir engel yok."
+
+6. ROTA (sahneye uygunsa)
+   Soru: "Çıkışa nasıl giderim?" / "Kapıya nasıl ulaşırım?"
+   Cevap: Referans noktalara dayalı adım adım rota.
+
+7. İHTİYAÇ
+   Soru: "Oturabilecek yer var mı?" / "Kaç kişi var?" / "Yardım isteyebileceğim biri var mı?"
+   Cevap (varsa): Konumu belirt. Cevap (yoksa): "Şu an [X] görünmüyor."
+
+8. TAKİP SORUSU (en az 1-2 tane ekle)
+   Önceki bir cevaba atıfta bulunan soru. Örnekler:
+   - "Az önce bahsettiğin bankoya sağ taraftan da ulaşabilir miyim?"
+   - "Daha iyi anlayamadım, farklı bir nesneye göre tarif eder misin?"
+   - "Peki o sandalyenin yanında ne var?"
+   - "Tehlikeli dedin, nasıl geçebilirim?"
+   Cevap: Önceki cevabı tamamlar veya farklı açıdan açıklar.
+
+GENEL KURALLAR:
+- MUTLAKA 6-8 soru-cevap çifti üret — daha az üretme
+- Konuşma doğal bir akış izlesin: genel soru → detay → takip → farklı konu → takip
+- Cevaplar yalnızca sahne açıklamasındaki bilgilere dayansın
+- Boş/yok cevapları gerçekçi yaz: "görünmüyor", "tespit edilemiyor"
+- Yabancıların kişisel eşyalarına (başkasının çantası, cüzdanı vb.) ulaşma sorusu üretme
+
+GENİŞ/AÇIK SAHNELER İÇİN (terminal, meydan, koridor):
+Ulaşılabilir nesne az olsa bile şu tipleri kullan:
+- "İnsanlara nasıl yaklaşırım?" / "Yardım isteyebileceğim biri var mı?"
+- "Bu alanda nasıl yön bulabilirim?"
+- "Koridor boyunca ilerlerken neyi rehber alabilirim?"
+- "En yakın duvara nasıl ulaşırım?"
+- "Ayaklarımın altındaki zemin değişiyor mu ilerledikçe?"
+- Birden fazla yönsellik sorusu (sağ, sol, arka) üret
+
+YASAK KELİMELER (cevaplarda asla kullanma):
+- "göreceksiniz", "görebilirsiniz", "görürsünüz" → "hissedeceksiniz", "elinize değecek", "bulacaksınız"
+- "bakın", "bakarsanız" → fiziksel yönlendirme kullan
+
+Yalnızca geçerli JSON döndür:
+[
+  {"question": "...", "answer": "..."}
+]"""
+
 # VLM config
-MAX_WORKERS = 3
-MAX_CONCURRENT_API_CALLS = 1
-API_TIMEOUT = 120  # seconds per request
-IMG_MAX_DIM = 256  # tiny for API
-IMG_MAX_SIZE = 5 * 1024 * 1024  # 5MB for API
-IMG_QUALITY = 30  # aggressive compression for VLM
+MAX_CONCURRENT_API_CALLS = 2
+API_TIMEOUT = 240
+IMG_MAX_DIM = 256
+IMG_QUALITY = 30
+IMG_EXTS = ('.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif')
 
 
 # ============================================================
 # Image utils
 # ============================================================
 def encode_image_for_api(img_path: Path) -> Dict:
-    """Resize image to fit API limits and return base64 data URL."""
     img = Image.open(img_path).convert("RGB")
-
     w, h = img.size
     if max(w, h) > IMG_MAX_DIM:
         ratio = IMG_MAX_DIM / max(w, h)
@@ -70,88 +136,85 @@ def encode_image_for_api(img_path: Path) -> Dict:
     return {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
 
 
+def copy_image_as_jpeg(src: Path, dst: Path) -> None:
+    Image.open(src).convert("RGB").save(dst, format="JPEG", quality=95)
+
+
 # ============================================================
-# VLM API call
+# VLM API helpers
 # ============================================================
-
-# Test multimodal support with a tiny image
-VLM_AVAILABLE = False
-try:
-    test_img = Image.new('RGB', (16, 16), (255, 0, 0))
-    buf = io.BytesIO()
-    test_img.save(buf, 'JPEG', quality=30)
-    test_b64 = base64.b64encode(buf.getvalue()).decode()
-    test_payload = {
-        'model': VLLM_MODEL,
-        'messages': [
-            {
-                'role': 'user',
-                'content': [
-                    {'type': 'text', 'text': 'one word'},
-                    {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{test_b64}'}}
-                ]
-            }
-        ],
-        'max_tokens': 5
-    }
-    r = requests.post(
-        f"{VLLM_BASEURL}/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {VLLM_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json=test_payload,
-        timeout=30
-    )
-    if r.status_code == 200 and r.json().get('choices'):
-        VLM_AVAILABLE = True
-        print(f"\n✓ VLLM multimodal is WORKING! response: {r.json()['choices'][0]['message']['content']}")
-    else:
-        print(f"\n✗ VLLM multimodal FAILED: status={r.status_code}")
-        print(f"  {r.text[:500]}")
-except Exception as e:
-    print(f"\n✗ VLLM multimodal check raised: {e}")
+def _parse_json_from_raw(raw: str):
+    raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
+    start = raw.find('{') if '{' in raw else raw.find('[')
+    end   = raw.rfind('}') if '}' in raw else raw.rfind(']')
+    if '{' in raw and '[' in raw:
+        start = min(raw.find('{'), raw.find('['))
+        end   = max(raw.rfind('}'), raw.rfind(']'))
+    if start != -1 and end != -1:
+        try:
+            return json.loads(raw[start:end + 1])
+        except json.JSONDecodeError:
+            pass
+    return None
 
 
-def build_vlm_messages(img_data: Dict, class_name: str) -> List[Dict]:
+def build_description_messages(img_data: Dict, class_name: str) -> List[Dict]:
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
         {
             "role": "user",
             "content": [
-                {"type": "text", "text": f"Class: {class_name}\n\nAnalyze this image and return ONLY valid JSON as specified."},
+                {
+                    "type": "text",
+                    "text": (
+                        f"Ortam türü: {class_name}\n\n"
+                        "Tek cümle sahne özeti ile başla. Sonra ön plandan arka plana nesne envanteri yap: "
+                        "her nesne için konum + materyal/renk + işlev belirt. "
+                        "'Bu görselde görülüyor' / 'Resimde görülüyor' kullanma. "
+                        "Kesin adım sayısı verme.\n"
+                        'Yalnızca şu formatta geçerli JSON döndür: {"description": "tarifin buraya"}'
+                    )
+                },
                 img_data
             ]
         }
     ]
 
 
-# ============================================================
-# Async VLM client
-# ============================================================
-async def call_vlm(
+def build_haptic_messages(description: str, class_name: str) -> List[Dict]:
+    return [
+        {"role": "system", "content": HAPTIC_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                f"Ortam türü: {class_name}\n\n"
+                f"Sahne açıklaması:\n{description}\n\n"
+                "Bu sahnedeki elle ulaşılabilir nesneler için 1-2 soru-cevap çifti üret. "
+                "Geçerli JSON döndür."
+            )
+        }
+    ]
+
+
+async def _call_api(
     session: aiohttp.ClientSession,
-    img_data: Dict,
-    img_path,
-    class_name: str,
+    messages: List[Dict],
+    label: str,
+    max_tokens: int = 1024,
+    temperature: float = 0.4,
     timeout: int = API_TIMEOUT,
     _retries: int = 0,
-) -> Optional[Dict]:
-    """Call VLLM VLM API to label a single image."""
-    messages = build_vlm_messages(img_data, class_name)
-
+) -> Optional[str]:
     payload = {
         "model": VLLM_MODEL,
         "messages": messages,
-        "max_tokens": 2048,
-        "temperature": 0.3,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
     }
-
     headers = {
         "Authorization": f"Bearer {VLLM_API_KEY}",
         "Content-Type": "application/json",
     }
-
     try:
         async with session.post(
             f"{VLLM_BASEURL}/v1/chat/completions",
@@ -162,19 +225,11 @@ async def call_vlm(
             if resp.status == 200:
                 data = await resp.json()
                 raw = data["choices"][0]["message"]["content"].strip()
-                raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
-                start = raw.find('{')
-                end = raw.rfind('}')
-                if start != -1 and end != -1:
-                    raw = raw[start:end+1]
-                return json.loads(raw)
+                return re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
             else:
                 body = await resp.text()
-                print(f"\nERROR: [HTTP {resp.status}] {body[:2000]}")
-                print(f"Image path: {img_path}")
-                print(f"b64 size: {len(img_data['image_url']['url'])} chars")
-                print(f"Payload text len: {len(json.dumps(payload))}")
-                MAX_RETRIES = 4
+                print(f"\nERROR [{label}] HTTP {resp.status}: {body[:500]}")
+                MAX_RETRIES = 3
                 if _retries >= MAX_RETRIES:
                     return None
                 if resp.status == 429:
@@ -183,138 +238,252 @@ async def call_vlm(
                     await asyncio.sleep(min(5 * 2 ** _retries, 60))
                 else:
                     return None
-                return await call_vlm(session, img_data, img_path, class_name, timeout, _retries + 1)
+                return await _call_api(session, messages, label, max_tokens, temperature, timeout, _retries + 1)
     except asyncio.TimeoutError:
-        print(f"\nTIMEOUT for image: {img_path}")
+        print(f"\nTIMEOUT [{label}]")
         return None
     except Exception as e:
-        print(f"\nEXCEPTION for image: {img_path} - {e}")
+        print(f"\nEXCEPTION [{label}]: {e}")
         traceback.print_exc()
         return None
+
+
+async def call_description(session, img_data, img_path, class_name) -> Optional[str]:
+    messages = build_description_messages(img_data, class_name)
+    raw = await _call_api(session, messages, f"desc:{img_path.name}", max_tokens=2048, temperature=0.3)
+    if not raw:
+        return None
+    parsed = _parse_json_from_raw(raw)
+    if isinstance(parsed, dict):
+        return parsed.get("description", raw)
+    return raw
+
+
+async def call_haptic_qa(session, description: str, class_name: str) -> List[Dict]:
+    messages = build_haptic_messages(description, class_name)
+    raw = await _call_api(session, messages, f"haptic:{class_name}", max_tokens=2048, temperature=0.5)
+    if not raw:
+        return []
+    parsed = _parse_json_from_raw(raw)
+    if isinstance(parsed, list):
+        return [qa for qa in parsed if isinstance(qa, dict) and "question" in qa and "answer" in qa]
+    return []
+
+
+# ============================================================
+# Build Unsloth conversation entry
+# ============================================================
+def build_conversation(img_name: str, description: str, haptic_qa: List[Dict]) -> Dict:
+    """
+    Unsloth multi-turn vision format:
+    - system: TR.md system prompt (model learns to follow rules)
+    - First user turn: image + opening question
+    - First assistant turn: scene description
+    - Subsequent turns: diverse Q&A + follow-ups (text only)
+    """
+    conversations = [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "image"},
+                {"type": "text", "text": "Ne var önümde?"}
+            ]
+        },
+        {
+            "role": "assistant",
+            "content": description
+        }
+    ]
+
+    for qa in haptic_qa:
+        conversations.append({"role": "user",      "content": qa["question"]})
+        conversations.append({"role": "assistant", "content": qa["answer"]})
+
+    return {"image": img_name, "conversations": conversations}
 
 
 # ============================================================
 # Processing pipeline
 # ============================================================
 async def process_dataset(data_dir: Path, output_dir: Path) -> None:
-    """Process all classes and images in the dataset."""
+    images_dir        = output_dir / "images"
+    progress_dir      = output_dir / "_progress"
+    conversations_path = output_dir / "conversations.json"   # Unsloth training format
+    data_json_path    = output_dir / "data.json"             # legacy flat format
+    failed_path       = output_dir / "failed_images.txt"
+
+    images_dir.mkdir(exist_ok=True)
+    progress_dir.mkdir(exist_ok=True)
+
     class_dirs = sorted([d for d in data_dir.iterdir() if d.is_dir()])
     print(f"Found {len(class_dirs)} classes in {data_dir}")
 
-    total_images = 0
-    for cls_dir in class_dirs:
-        total_images += len([f for f in cls_dir.iterdir() if f.suffix.lower() in ('.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif')])
-    print(f"Total images to process: {total_images}")
+    total_images = sum(
+        len([f for f in d.iterdir() if f.suffix.lower() in IMG_EXTS])
+        for d in class_dirs
+    )
+    print(f"Total images: {total_images}")
 
-    output_dir.mkdir(exist_ok=True)
+    existing_imgs = sorted(images_dir.glob("img_*.jpg"))
+    counter = [len(existing_imgs)]
+
+    all_conversations: List[Dict] = []
+    all_flat: List[Dict] = []
+
+    if conversations_path.exists():
+        try:
+            all_conversations = json.loads(conversations_path.read_text(encoding="utf-8"))
+            print(f"Resuming — {len(all_conversations)} conversations loaded")
+        except json.JSONDecodeError:
+            pass
+
+    if data_json_path.exists():
+        try:
+            all_flat = json.loads(data_json_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            pass
 
     global_semaphore = asyncio.Semaphore(MAX_CONCURRENT_API_CALLS)
-    completed_count = [0]
-
-    all_img_tasks = []
-    for cls_dir in class_dirs:
-        img_files = sorted([
-            f for f in cls_dir.iterdir()
-            if f.suffix.lower() in ('.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif')
-        ])
-        if not img_files:
-            continue
-        for img_file in img_files:
-            all_img_tasks.append((cls_dir.name, img_file))
-
-    print(f"\nProcessing {len(all_img_tasks)} images with {MAX_CONCURRENT_API_CALLS} concurrent VLM calls...\n")
-
-    all_labels = []
-    failed_files = set()
+    global_failed: set = set()
+    global_completed = [counter[0]]
+    start_time = time.monotonic()
 
     async with aiohttp.TCPConnector(limit=MAX_CONCURRENT_API_CALLS, ttl_dns_cache=300) as connector:
         async with aiohttp.ClientSession(connector=connector) as session:
-            async def process_task(cls_name: str, img_path: Path):
-                try:
-                    async with global_semaphore:
-                        img_data = encode_image_for_api(img_path)
-                        # FIX: pass img_path so call_vlm can log it and retry correctly
-                        raw_result = await call_vlm(session, img_data, img_path, cls_name)
 
-                    if raw_result is not None:
-                        label = {
-                            "image_path": str(img_path.relative_to(Path(__file__).parent.parent)),
-                            "class": cls_name,
-                            **raw_result
-                        }
-                        all_labels.append(label)
-                    else:
-                        failed_files.add(img_path.name)
+            for cls_dir in class_dirs:
+                cls_name    = cls_dir.name
+                done_marker = progress_dir / f"{cls_name}.done"
 
-                    completed_count[0] += 1
-                    if completed_count[0] % 10 == 0 or completed_count[0] == len(all_img_tasks):
-                        elapsed = time.monotonic() - start_time
-                        rate = completed_count[0] / elapsed if elapsed > 0 else 0
-                        eta = (len(all_img_tasks) - completed_count[0]) / rate if rate > 0 else 0
-                        bar_len = completed_count[0] / len(all_img_tasks) * 40
-                        bar = '█' * int(bar_len) + '░' * (40 - int(bar_len))
-                        pct = completed_count[0] / len(all_img_tasks) * 100
-                        print(f"\r[█{bar}] {completed_count[0]}/{len(all_img_tasks)} ({pct:.1f}%) | {rate:.1f} img/s | ETA: {eta:.0f}s", end='', flush=True)
-                except Exception as e:
-                    failed_files.add(img_path.name)
-                    completed_count[0] += 1
+                img_files = sorted([f for f in cls_dir.iterdir() if f.suffix.lower() in IMG_EXTS])
+                if not img_files:
+                    continue
 
-            start_time = time.monotonic()
-            tasks = [process_task(cls_name, img_path) for cls_name, img_path in all_img_tasks]
-            await asyncio.gather(*tasks)
+                if done_marker.exists():
+                    print(f"[SKIP] {cls_name}")
+                    global_completed[0] += len(img_files)
+                    continue
 
-    print(f"\n")
+                print(f"\n[START] {cls_name} — {len(img_files)} images")
 
-    class_label_map = {}
-    for label in all_labels:
-        cls = label["class"]
-        if cls not in class_label_map:
-            class_label_map[cls] = []
-        class_label_map[cls].append(label)
+                cls_conversations: List[Dict] = []
+                cls_flat: List[Dict] = []
+                cls_failed: set = set()
+                cls_completed = [0]
 
-    for cls_name, labels in class_label_map.items():
-        cls_dir = DATA_DIR / cls_name
-        img_files = sorted([
-            f for f in cls_dir.iterdir()
-            if f.suffix.lower() in ('.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif')
-        ])
-        print(f"\n[{cls_name}] {len(labels)}/{len(img_files)} labeled ({len(img_files)-len(labels)} failed)")
-        class_json_path = output_dir / f"{cls_name}.json"
-        await save_jsonl(class_json_path, labels)
+                async def process_task(
+                    img_path: Path,
+                    _cls=cls_name,
+                    _cls_conv=cls_conversations,
+                    _cls_flat=cls_flat,
+                    _cls_failed=cls_failed,
+                    _cls_completed=cls_completed,
+                ):
+                    try:
+                        async with global_semaphore:
+                            img_data    = encode_image_for_api(img_path)
+                            description = await call_description(session, img_data, img_path, _cls)
 
-    global_path = output_dir / "all_labels.jsonl"
-    async with aiofiles.open(global_path, "w", encoding="utf-8") as f:
-        for label in all_labels:
-            await f.write(json.dumps(label, ensure_ascii=False) + "\n")
+                        if description:
+                            # Haptic Q&A (text-only, no image needed)
+                            haptic_qa = await call_haptic_qa(session, description, _cls)
 
-    if failed_files:
-        failed_path = output_dir / "failed_images.txt"
-        async with aiofiles.open(failed_path, "w") as f:
-            for img in failed_files:
-                await f.write(img + "\n")
+                            n = counter[0]
+                            counter[0] += 1
+                            img_name = f"img_{n + 1:04d}.jpg"
+                            copy_image_as_jpeg(img_path, images_dir / img_name)
+
+                            _cls_conv.append(build_conversation(img_name, description, haptic_qa))
+                            _cls_flat.append({"image": img_name, "description": description})
+                        else:
+                            _cls_failed.add(img_path.name)
+
+                        _cls_completed[0] += 1
+                        global_completed[0] += 1
+                        if _cls_completed[0] % 5 == 0 or _cls_completed[0] == len(img_files):
+                            elapsed  = time.monotonic() - start_time
+                            rate     = global_completed[0] / elapsed if elapsed > 0 else 0
+                            eta      = (total_images - global_completed[0]) / rate if rate > 0 else 0
+                            bar_len  = global_completed[0] / total_images * 40
+                            bar      = '█' * int(bar_len) + '░' * (40 - int(bar_len))
+                            pct      = global_completed[0] / total_images * 100
+                            print(
+                                f"\r[{bar}] {global_completed[0]}/{total_images} ({pct:.1f}%) "
+                                f"| {_cls}: {_cls_completed[0]}/{len(img_files)} "
+                                f"| {rate:.1f} img/s | ETA: {eta:.0f}s",
+                                end='', flush=True
+                            )
+                    except Exception:
+                        _cls_failed.add(img_path.name)
+                        _cls_completed[0] += 1
+                        global_completed[0] += 1
+
+                tasks = [process_task(img_path) for img_path in img_files]
+                await asyncio.gather(*tasks)
+
+                all_conversations.extend(cls_conversations)
+                all_flat.extend(cls_flat)
+
+                async with aiofiles.open(conversations_path, "w", encoding="utf-8") as f:
+                    await f.write(json.dumps(all_conversations, ensure_ascii=False, indent=2))
+                async with aiofiles.open(data_json_path, "w", encoding="utf-8") as f:
+                    await f.write(json.dumps(all_flat, ensure_ascii=False, indent=2))
+
+                done_marker.write_text("done")
+                print(
+                    f"\n[SAVED] {cls_name} — {len(cls_conversations)}/{len(img_files)} labeled, "
+                    f"{len(cls_failed)} failed | total: {len(all_conversations)}"
+                )
+
+                if cls_failed:
+                    async with aiofiles.open(failed_path, "a") as f:
+                        for img in cls_failed:
+                            await f.write(img + "\n")
+
+                global_failed.update(cls_failed)
 
     print(f"\n{'='*60}")
-    print(f"Done! Processed {len(all_labels)} images total.")
-    print(f"Failed: {len(failed_files)}")
-    print(f"Output: {output_dir}")
+    print(f"Done! {len(all_conversations)} conversations")
+    print(f"conversations.json → {conversations_path}")
+    print(f"data.json          → {data_json_path}")
+    print(f"images/            → {images_dir}")
     print(f"{'='*60}")
-
-
-async def save_jsonl(path: Path, labels: List[Dict]) -> None:
-    async with aiofiles.open(path, "w", encoding="utf-8") as f:
-        for label in labels:
-            await f.write(json.dumps(label, ensure_ascii=False) + "\n")
 
 
 # ============================================================
 # Main
 # ============================================================
 async def main():
-    print(f"VLM Model: {VLLM_MODEL}")
-    print(f"Data Dir:  {DATA_DIR.absolute()}")
-    print(f"Output:    {OUTPUT_DIR.absolute()}")
-    print(f"Concurrency: {MAX_CONCURRENT_API_CALLS} parallel API calls")
-    print()
+    # Test multimodal
+    try:
+        test_img = Image.new('RGB', (16, 16), (255, 0, 0))
+        buf = io.BytesIO()
+        test_img.save(buf, 'JPEG', quality=30)
+        test_b64 = base64.b64encode(buf.getvalue()).decode()
+        r = requests.post(
+            f"{VLLM_BASEURL}/v1/chat/completions",
+            headers={"Authorization": f"Bearer {VLLM_API_KEY}", "Content-Type": "application/json"},
+            json={"model": VLLM_MODEL, "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "one word"},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{test_b64}"}}
+            ]}], "max_tokens": 5},
+            timeout=30
+        )
+        if r.status_code == 200 and r.json().get("choices"):
+            print(f"✓ VLLM multimodal OK: {r.json()['choices'][0]['message']['content']}")
+        else:
+            print(f"✗ VLLM multimodal FAILED: {r.status_code}")
+    except Exception as e:
+        print(f"✗ VLLM check error: {e}")
+
+    print(f"\nVLM Model : {VLLM_MODEL}")
+    print(f"Data Dir  : {DATA_DIR.absolute()}")
+    print(f"Output    : {OUTPUT_DIR.absolute()}")
+    print(f"Concurrency: {MAX_CONCURRENT_API_CALLS} parallel API calls\n")
 
     await process_dataset(DATA_DIR, OUTPUT_DIR)
 
