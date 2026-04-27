@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.whl
+
+# Virtual Environment
+venv/
+.venv/
+env/
+.env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints
+
+# Unsloth / ML artifacts
+*.ckpt
+*.safetensors
+*.bin
+*.gguf
+unslothFinetune/checkpoints/
+unslothFinetune/results/
+unslothFinetune/models/
+
+# Dart / Flutter
+.packages
+.dart_tool/
+build/
+*.iml
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Environment variables
+.env
+.env.local
+.env.*.local
