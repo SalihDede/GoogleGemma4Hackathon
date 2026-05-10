@@ -1,0 +1,67 @@
+name: gallery_assistant
+description: "LUMOS — Enlight Your World. On-device AI assistant for visually impaired users."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # On-device Gemma / LiteRT inference
+  flutter_gemma: '>=0.4.0 <1.0.0'
+
+  # State management
+  flutter_riverpod: ^2.6.1
+
+  # Camera & image
+  image_picker: ^1.1.2
+  image: ^4.3.0
+
+  # Voice I/O (critical for visually impaired)
+  speech_to_text: ^7.0.0
+  flutter_tts: ^4.2.0
+
+  # Markdown rendering (model output)
+  flutter_markdown: ^0.7.6
+
+  # Storage
+  path_provider: ^2.1.5
+  shared_preferences: ^2.3.3
+
+  # Utils
+  uuid: ^4.5.1
+  url_launcher: ^6.3.1
+  flutter_contacts: ^1.1.9+1
+  permission_handler: ^11.3.1
+
+  # Cloud inference (OpenRouter)
+  http: ^1.2.0
+
+  # In-app embedded map (get_location_info)
+  webview_flutter: ^4.10.0
+
+  # Headless WebView screenshot (get_directions — Google Maps rota görseli)
+  flutter_inappwebview: ^6.1.5
+
+  # Cihaz konumu (get_location_info)
+  geolocator: ^13.0.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.3
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "appIcon.png"
+  min_sdk_android: 21
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "appIcon.png"
+
+flutter:
+  uses-material-design: true
