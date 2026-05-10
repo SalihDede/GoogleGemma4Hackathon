@@ -1,0 +1,37 @@
+workflows:
+  ios_unsigned:
+    name: iOS unsigned build
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+
+    scripts:
+      - name: Show tool versions
+        script: |
+          flutter --version
+          xcodebuild -version
+          pod --version
+
+      - name: Get Flutter packages
+        script: |
+          cd gallery_assistant
+          flutter pub get
+
+      - name: Install iOS pods
+        script: |
+          cd gallery_assistant/ios
+          pod install
+
+      - name: Build iOS without code signing
+        script: |
+          cd gallery_assistant
+          flutter build ios --release --no-codesign
+
+    artifacts:
+      - gallery_assistant/build/ios/iphoneos/*.app
+      - gallery_assistant/build/ios/iphoneos/Runner.app
+      - gallery_assistant/build/**/outputs/**/*.log
