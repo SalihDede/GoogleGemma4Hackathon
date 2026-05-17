@@ -11,22 +11,19 @@ class ChatMessage {
   final MessageRole role;
   String text;
 
-  // Thinking bölümü (model <think>...</think> yazdığında)
   String? thinkingText;
   bool thinkingExpanded;
 
-  // Kullanıcı görseli
   final Uint8List? imageBytes;
 
   // Tool call bilgisi
   ToolCall? toolCall;
   List<ToolInvocation> toolInvocations;
-  ToolResult? toolResultData; // inline widget için yapısal sonuç
+  ToolResult? toolResultData;
 
   MessageStatus status;
   final DateTime createdAt;
 
-  // Yerel inference için backend + benchmark (TTFT, tok/s) — UI altta gösterir.
   InferenceStats? stats;
 
   ChatMessage({

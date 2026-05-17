@@ -1,7 +1,5 @@
 import 'package:flutter/widgets.dart';
 
-/// 4-pt grid spacing tokens — Material 3 + Apple HIG uyumlu.
-/// Doğrudan int vermek yerine her zaman bu sabitleri kullan.
 abstract class AppSpacing {
   static const double xs = 4;
   static const double sm = 8;
@@ -12,7 +10,6 @@ abstract class AppSpacing {
   static const double xxxl = 48;
 }
 
-/// Köşe yarıçap tokens — M3 shape scale.
 abstract class AppRadius {
   static const double xs = 4;
   static const double sm = 8;
@@ -23,7 +20,6 @@ abstract class AppRadius {
   static const double full = 999;
 }
 
-/// Sık kullanılan EdgeInsets — boilerplate azaltır.
 abstract class AppPadding {
   static const all4 = EdgeInsets.all(AppSpacing.xs);
   static const all8 = EdgeInsets.all(AppSpacing.sm);

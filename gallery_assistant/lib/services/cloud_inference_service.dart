@@ -1,20 +1,20 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as dev;
-import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/inference_chunk.dart';
 import '../models/tool_result.dart';
+import 'app_settings_service.dart';
 import 'litert_prompts.dart';
 import 'tool_runner.dart';
 
-const _openRouterApiKey =
-    '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';
 const _model = 'google/gemma-4-26b-a4b-it:nitro';
 const _endpoint = 'https://openrouter.ai/api/v1/chat/completions';
-const _maxToolHops = 4;
+const _maxToolHops = 8;
+const _platformChannel = MethodChannel('com.lumos/call');
 
 String _readingOrUnknown(String value) {
   final trimmed = value.trim();
@@ -23,7 +23,6 @@ String _readingOrUnknown(String value) {
 
 String _sensorContextSummary({
   required String lux,
-  required String distanceMm,
   required String temperatureC,
   required String humidityPercent,
   required String pressureHpa,
@@ -32,10 +31,9 @@ String _sensorContextSummary({
   final temp = _readingOrUnknown(temperatureC);
   final humidity = _readingOrUnknown(humidityPercent);
   final light = _readingOrUnknown(lux);
-  final distance = _readingOrUnknown(distanceMm);
   final pressure = _readingOrUnknown(pressureHpa);
   final movement = _readingOrUnknown(motion);
-  return 'Local sensor readings, not official weather: temperature $temp degrees Celsius, humidity $humidity percent, ambient light $light lux, distance reading $distance mm, pressure $pressure hPa, motion $movement. Speak these values naturally; humidity values are percentages, not one hundred percent unless the value is 100.';
+  return 'Local sensor readings, not official weather: temperature $temp degrees Celsius, humidity $humidity percent, ambient light $light lux, pressure $pressure hPa, motion $movement. Speak these values naturally; humidity values are percentages, not one hundred percent unless the value is 100.';
 }
 
 String _brightnessSummary({
@@ -45,18 +43,6 @@ String _brightnessSummary({
   final light = _readingOrUnknown(lux);
   final label = _readingOrUnknown(classification);
   return 'Local light reading: ambient light is $label at $light lux.';
-}
-
-String _nearObstacleSummary({
-  required String distanceMm,
-  required String obstacle,
-}) {
-  final distance = _readingOrUnknown(distanceMm);
-  final hasObstacle = obstacle.trim().toLowerCase() == 'true';
-  final status = hasObstacle
-      ? 'near obstacle detected'
-      : 'no near obstacle detected';
-  return 'Local short-range distance reading: $status. Distance value is $distance mm; use it only as a short-range cue, not as exact room measurement.';
 }
 
 String _environmentSummary({
@@ -122,8 +108,10 @@ class CloudInferenceService {
   final List<Map<String, dynamic>> _history = [];
   final http.Client _client = http.Client();
 
-  bool get isConfigured =>
-      _openRouterApiKey.isNotEmpty && _openRouterApiKey.startsWith('sk-or-');
+  Future<bool> isConfigured() async {
+    final key = await AppSettingsService.instance.openRouterApiKeyOrNull();
+    return key != null && key.startsWith('sk-or-');
+  }
 
   void clearHistory() => _history.clear();
 
@@ -180,7 +168,6 @@ class CloudInferenceService {
         return;
       }
 
-      // 2) tool çağrılarını history'ye ekle (assistant-side)
       final assistTxt = turn.assistantText.toString();
       final assistantMessage = <String, dynamic>{
         'role': 'assistant',
@@ -197,7 +184,6 @@ class CloudInferenceService {
       };
       _history.add(assistantMessage);
 
-      // 3) her tool'u çalıştır, result'ı yield et + history'ye ekle
       for (final call in turn.toolCalls) {
         final args = _safeJson(call.argsJson);
         final result = await ToolRunner.instance.run(
@@ -212,12 +198,15 @@ class CloudInferenceService {
           'content': _serializeToolResult(result),
         });
       }
-
-      // loop: model şimdi result'ları görüp final cevabı üretsin
     }
   }
 
   Stream<InferenceChunk> _streamOneTurn(_TurnState turn) async* {
+    final apiKey = await AppSettingsService.instance.openRouterApiKeyOrNull();
+    if (apiKey == null || !apiKey.startsWith('sk-or-')) {
+      throw StateError('OpenRouter API key is missing.');
+    }
+
     final messages = [
       {'role': 'system', 'content': _systemPrompt},
       ..._history,
@@ -233,13 +222,14 @@ class CloudInferenceService {
 
     final request = http.Request('POST', Uri.parse(_endpoint));
     request.headers.addAll({
-      'Authorization': 'Bearer $_openRouterApiKey',
+      'Authorization': 'Bearer $apiKey',
       'Content-Type': 'application/json',
       'HTTP-Referer': 'https://lumos.local',
       'X-Title': 'LUMOS',
     });
     request.body = body;
 
+    await _bindMobileForInternet();
     final response = await _client.send(request);
     if (response.statusCode != 200) {
       final errBody = await response.stream.bytesToString();
@@ -340,6 +330,17 @@ class CloudInferenceService {
     );
   }
 
+  Future<void> _bindMobileForInternet() async {
+    try {
+      await _platformChannel
+          .invokeMethod<String>('bindMobileForInternet')
+          .timeout(const Duration(seconds: 5));
+    } catch (_) {
+      // Non-Android devices, Wi-Fi networks that already have internet, or
+      // phones without active mobile data can continue on the default route.
+    }
+  }
+
   String _reasoningTextFromDelta(Map<String, dynamic> delta) {
     for (final key in const ['reasoning', 'reasoning_content', 'thinking']) {
       final value = delta[key];
@@ -414,40 +415,37 @@ class CloudInferenceService {
         }),
       SensorContextResult(
         :final lux,
-        :final distanceMm,
         :final temperatureC,
         :final humidityPercent,
         :final pressureHpa,
         :final motion,
+        :final accelX,
+        :final accelY,
+        :final accelZ,
+        :final gyroX,
+        :final gyroY,
+        :final gyroZ,
       ) =>
         jsonEncode({
           'summary': _sensorContextSummary(
             lux: lux,
-            distanceMm: distanceMm,
             temperatureC: temperatureC,
             humidityPercent: humidityPercent,
             pressureHpa: pressureHpa,
             motion: motion,
           ),
           'lux': lux,
-          'distance_mm': distanceMm,
           'temperature_c': temperatureC,
           'humidity_percent': humidityPercent,
           'pressure_hpa': pressureHpa,
           'motion': motion,
+          'accel_mps2': {'x': accelX, 'y': accelY, 'z': accelZ},
+          'gyro_dps': {'x': gyroX, 'y': gyroY, 'z': gyroZ},
         }),
       BrightnessResult(:final lux, :final classification) => jsonEncode({
         'summary': _brightnessSummary(lux: lux, classification: classification),
         'lux': lux,
         'classification': classification,
-      }),
-      NearObstacleResult(:final distanceMm, :final obstacle) => jsonEncode({
-        'summary': _nearObstacleSummary(
-          distanceMm: distanceMm,
-          obstacle: obstacle,
-        ),
-        'distance_mm': distanceMm,
-        'obstacle': obstacle,
       }),
       EnvironmentStatusResult(
         :final temperatureC,
@@ -467,9 +465,40 @@ class CloudInferenceService {
           'pressure_hpa': pressureHpa,
           'comfort': comfort,
         }),
-      MotionStateResult(:final stable, :final tilt, :final motion) =>
+      MotionStateResult(
+        :final stable,
+        :final tilt,
+        :final motion,
+        :final accelX,
+        :final accelY,
+        :final accelZ,
+        :final gyroX,
+        :final gyroY,
+        :final gyroZ,
+      ) =>
         jsonEncode({
           'summary': _motionSummary(stable: stable, tilt: tilt, motion: motion),
+          'stable': stable,
+          'tilt': tilt,
+          'motion': motion,
+          'accel_mps2': {'x': accelX, 'y': accelY, 'z': accelZ},
+          'gyro_dps': {'x': gyroX, 'y': gyroY, 'z': gyroZ},
+        }),
+      InertialSensorResult(
+        :final accelX,
+        :final accelY,
+        :final accelZ,
+        :final gyroX,
+        :final gyroY,
+        :final gyroZ,
+        :final stable,
+        :final tilt,
+        :final motion,
+      ) =>
+        jsonEncode({
+          'summary': _motionSummary(stable: stable, tilt: tilt, motion: motion),
+          'accel_mps2': {'x': accelX, 'y': accelY, 'z': accelZ},
+          'gyro_dps': {'x': gyroX, 'y': gyroY, 'z': gyroZ},
           'stable': stable,
           'tilt': tilt,
           'motion': motion,

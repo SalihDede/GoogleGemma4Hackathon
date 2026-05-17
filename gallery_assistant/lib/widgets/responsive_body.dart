@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../theme/breakpoints.dart';
 
-/// İçeriği geniş ekranlarda ortalar ve okunabilir bir maxWidth ile sınırlar.
-/// Telefonlarda hiçbir kısıtlama getirmez (full width).
 class ResponsiveBody extends StatelessWidget {
   final Widget child;
   final double? maxWidth;
@@ -33,7 +31,6 @@ class ResponsiveBody extends StatelessWidget {
   }
 }
 
-/// Modal/onboarding gibi dar konteynerler için ortalanmış kart genişliği.
 class ResponsiveCardBody extends StatelessWidget {
   final Widget child;
   final EdgeInsetsGeometry padding;

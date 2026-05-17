@@ -3,11 +3,8 @@ import 'package:flutter/services.dart';
 
 import 'app_spacing.dart';
 
-/// LUMOS marka tohum rengi. Material You "primary" buradan türetiliyor.
 const Color _seedColor = Color(0xFF1A73E8);
 
-/// Material 3 tabanlı uygulama teması. Light / dark için aynı şablon,
-/// `ColorScheme.fromSeed` brightness'a göre tüm yan rolleri üretir.
 abstract class AppTheme {
   static ThemeData light() => _build(Brightness.light);
   static ThemeData dark() => _build(Brightness.dark);
@@ -103,7 +100,6 @@ abstract class AppTheme {
       iconButtonTheme: IconButtonThemeData(
         style: IconButton.styleFrom(
           minimumSize: const Size.square(44),
-          // Görme engelli kullanıcı için minimum 44dp dokunma alanı (WCAG 2.5.5).
           tapTargetSize: MaterialTapTargetSize.padded,
         ),
       ),
@@ -199,7 +195,6 @@ abstract class AppTheme {
   }
 
   static TextTheme _textTheme(TextTheme base, ColorScheme scheme) {
-    // M3 type scale + erişilebilirlik için biraz büyütülmüş gövde.
     return base.copyWith(
       displayLarge: base.displayLarge?.copyWith(
         fontWeight: FontWeight.w700,

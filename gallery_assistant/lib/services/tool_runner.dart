@@ -3,10 +3,9 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:flutter_gemma/flutter_gemma.dart';
-import 'package:image_picker/image_picker.dart';
 
 import '../models/tool_result.dart';
-import 'image_service.dart';
+import 'sensor_hub_service.dart';
 
 const _callChannel = MethodChannel('com.lumos/call');
 
@@ -32,7 +31,6 @@ String _readingOrUnknown(String value) {
 
 String _sensorContextSummary({
   required String lux,
-  required String distanceMm,
   required String temperatureC,
   required String humidityPercent,
   required String pressureHpa,
@@ -41,10 +39,9 @@ String _sensorContextSummary({
   final temp = _readingOrUnknown(temperatureC);
   final humidity = _readingOrUnknown(humidityPercent);
   final light = _readingOrUnknown(lux);
-  final distance = _readingOrUnknown(distanceMm);
   final pressure = _readingOrUnknown(pressureHpa);
   final movement = _readingOrUnknown(motion);
-  return 'Local sensor readings, not official weather: temperature $temp degrees Celsius, humidity $humidity percent, ambient light $light lux, distance reading $distance mm, pressure $pressure hPa, motion $movement. Speak these values naturally; humidity values are percentages, not one hundred percent unless the value is 100.';
+  return 'Local sensor readings, not official weather: temperature $temp degrees Celsius, humidity $humidity percent, ambient light $light lux, pressure $pressure hPa, motion $movement. Speak these values naturally; humidity values are percentages, not one hundred percent unless the value is 100.';
 }
 
 String _brightnessSummary({
@@ -54,18 +51,6 @@ String _brightnessSummary({
   final light = _readingOrUnknown(lux);
   final label = _readingOrUnknown(classification);
   return 'Local light reading: ambient light is $label at $light lux.';
-}
-
-String _nearObstacleSummary({
-  required String distanceMm,
-  required String obstacle,
-}) {
-  final distance = _readingOrUnknown(distanceMm);
-  final hasObstacle = obstacle.trim().toLowerCase() == 'true';
-  final status = hasObstacle
-      ? 'near obstacle detected'
-      : 'no near obstacle detected';
-  return 'Local short-range distance reading: $status. Distance value is $distance mm; use it only as a short-range cue, not as exact room measurement.';
 }
 
 String _environmentSummary({
@@ -90,28 +75,6 @@ String _motionSummary({
   final tiltLabel = _readingOrUnknown(tilt);
   final movement = _readingOrUnknown(motion);
   return 'Local motion reading: stable $stableLabel, tilt $tiltLabel, motion $movement.';
-}
-
-final _imagePicker = ImagePicker();
-
-Future<CaptureImageResult> _captureFromCamera(String reason) async {
-  try {
-    final shot = await _imagePicker.pickImage(
-      source: ImageSource.camera,
-      imageQuality: 85,
-    );
-    if (shot == null) {
-      return CaptureImageResult(reason: reason, error: 'cancelled');
-    }
-    final raw = await shot.readAsBytes();
-    final prepared = await ImageService.instance.prepareFromBytes(raw);
-    if (prepared == null) {
-      return CaptureImageResult(reason: reason, error: 'decode_failed');
-    }
-    return CaptureImageResult(imageBytes: prepared, reason: reason);
-  } catch (e) {
-    return CaptureImageResult(reason: reason, error: e.toString());
-  }
 }
 
 class ToolRunner {
@@ -172,40 +135,37 @@ class ToolRunner {
       InternetConnectionStatusResult() => {'unavailable': true},
       SensorContextResult(
         :final lux,
-        :final distanceMm,
         :final temperatureC,
         :final humidityPercent,
         :final pressureHpa,
         :final motion,
+        :final accelX,
+        :final accelY,
+        :final accelZ,
+        :final gyroX,
+        :final gyroY,
+        :final gyroZ,
       ) =>
         {
           'summary': _sensorContextSummary(
             lux: lux,
-            distanceMm: distanceMm,
             temperatureC: temperatureC,
             humidityPercent: humidityPercent,
             pressureHpa: pressureHpa,
             motion: motion,
           ),
           'lux': lux,
-          'distance_mm': distanceMm,
           'temperature_c': temperatureC,
           'humidity_percent': humidityPercent,
           'pressure_hpa': pressureHpa,
           'motion': motion,
+          'accel_mps2': {'x': accelX, 'y': accelY, 'z': accelZ},
+          'gyro_dps': {'x': gyroX, 'y': gyroY, 'z': gyroZ},
         },
       BrightnessResult(:final lux, :final classification) => {
         'summary': _brightnessSummary(lux: lux, classification: classification),
         'lux': lux,
         'classification': classification,
-      },
-      NearObstacleResult(:final distanceMm, :final obstacle) => {
-        'summary': _nearObstacleSummary(
-          distanceMm: distanceMm,
-          obstacle: obstacle,
-        ),
-        'distance_mm': distanceMm,
-        'obstacle': obstacle,
       },
       EnvironmentStatusResult(
         :final temperatureC,
@@ -225,12 +185,44 @@ class ToolRunner {
           'pressure_hpa': pressureHpa,
           'comfort': comfort,
         },
-      MotionStateResult(:final stable, :final tilt, :final motion) => {
-        'summary': _motionSummary(stable: stable, tilt: tilt, motion: motion),
-        'stable': stable,
-        'tilt': tilt,
-        'motion': motion,
-      },
+      MotionStateResult(
+        :final stable,
+        :final tilt,
+        :final motion,
+        :final accelX,
+        :final accelY,
+        :final accelZ,
+        :final gyroX,
+        :final gyroY,
+        :final gyroZ,
+      ) =>
+        {
+          'summary': _motionSummary(stable: stable, tilt: tilt, motion: motion),
+          'stable': stable,
+          'tilt': tilt,
+          'motion': motion,
+          'accel_mps2': {'x': accelX, 'y': accelY, 'z': accelZ},
+          'gyro_dps': {'x': gyroX, 'y': gyroY, 'z': gyroZ},
+        },
+      InertialSensorResult(
+        :final accelX,
+        :final accelY,
+        :final accelZ,
+        :final gyroX,
+        :final gyroY,
+        :final gyroZ,
+        :final stable,
+        :final tilt,
+        :final motion,
+      ) =>
+        {
+          'summary': _motionSummary(stable: stable, tilt: tilt, motion: motion),
+          'accel_mps2': {'x': accelX, 'y': accelY, 'z': accelZ},
+          'gyro_dps': {'x': gyroX, 'y': gyroY, 'z': gyroZ},
+          'stable': stable,
+          'tilt': tilt,
+          'motion': motion,
+        },
       ReminderResult(:final text, :final minutes) => {
         'set': true,
         'text': text,
@@ -252,7 +244,6 @@ class ToolRunner {
     };
   }
 
-  // flutter_gemma'nın FunctionCallResponse'unu ToolCallRequest'e çevir
   ToolCallRequest fromFunctionCall(String name, Map<String, dynamic> args) {
     return ToolCallRequest(name: name, args: args);
   }
@@ -292,13 +283,12 @@ void registerDefaultTools() {
   r.register(
     const Tool(
       name: 'read_text',
-      description: 'Reads and transcribes all visible text in the image.',
+      description:
+          'Captures a fresh ESP32-CAM image, then the model reads and transcribes visible text from that image.',
       parameters: {'type': 'object', 'properties': {}},
     ),
     (args) async {
-      // Model metni doğrudan TextResponse olarak üretecek;
-      // bu result sadece UI kartı için tetikleyici
-      return const TextReadResult('');
+      return SensorHubService.instance.captureImage('task:read_text');
     },
   );
 
@@ -306,21 +296,25 @@ void registerDefaultTools() {
     const Tool(
       name: 'identify_object',
       description:
-          'Identifies a specific object and its clock-face position in the scene.',
+          'Captures a fresh ESP32-CAM image, then the model finds the requested object and its clock-face position.',
       parameters: {
         'type': 'object',
         'properties': {
           'object': {
             'type': 'string',
-            'description': 'Object to find (e.g. "door", "chair", "exit sign")',
+            'description':
+                'Object to find (for example, door, chair, or exit sign)',
           },
         },
         'required': ['object'],
       },
     ),
     (args) async {
-      final object = (args['object'] as String?) ?? 'object';
-      return ObjectFoundResult(objectName: object);
+      final object = ((args['object'] as String?) ?? 'object').trim();
+      final target = object.isEmpty ? 'object' : object;
+      return SensorHubService.instance.captureImage(
+        'task:identify_object:$target',
+      );
     },
   );
 
@@ -328,20 +322,28 @@ void registerDefaultTools() {
     const Tool(
       name: 'check_sensor_context',
       description:
-          'Combined snapshot of all external sensors: light(lux), distance(mm), '
+          'Combined snapshot of all external sensors: light(lux), '
           'temp(C), humidity(%), pressure(hPa), motion. Call FIRST for broad safety/'
           'environment questions ("is it safe here?", "how is the environment?"). '
-          'Null fields = sensor offline.',
+          'Null/empty fields = sensor offline.',
       parameters: {'type': 'object', 'properties': {}},
     ),
-    (args) async => const SensorContextResult(
-      lux: '320.5',
-      distanceMm: '1450',
-      temperatureC: '23.4',
-      humidityPercent: '46.0',
-      pressureHpa: '1012.8',
-      motion: 'still',
-    ),
+    (args) async {
+      final snapshot = await SensorHubService.instance.fetchSnapshot();
+      return SensorContextResult(
+        lux: snapshot.lux,
+        temperatureC: snapshot.temperatureC,
+        humidityPercent: snapshot.humidityPercent,
+        pressureHpa: snapshot.pressureHpa,
+        motion: snapshot.motion,
+        accelX: snapshot.accelX,
+        accelY: snapshot.accelY,
+        accelZ: snapshot.accelZ,
+        gyroX: snapshot.gyroX,
+        gyroY: snapshot.gyroY,
+        gyroZ: snapshot.gyroZ,
+      );
+    },
   );
 
   r.register(
@@ -350,25 +352,16 @@ void registerDefaultTools() {
       description:
           'Ambient light. Returns lux and class (dark<10, dim<50, normal<1000, '
           'bright<10000, too_bright>10000). Use for darkness/light questions or '
-          'to judge if camera image will be reliable. Light only — no distance/motion.',
+          'to judge if camera image will be reliable. Light only; no motion.',
       parameters: {'type': 'object', 'properties': {}},
     ),
-    (args) async =>
-        const BrightnessResult(lux: '320.5', classification: 'normal'),
-  );
-
-  r.register(
-    const Tool(
-      name: 'detect_near_obstacle',
-      description:
-          'Short-range distance sensor (reliable up to ~200mm/arm reach). Returns '
-          'distance_mm and obstacle bool. Use for "is something right in front?", '
-          '"within reach?", "safe to step?". Beyond ~20cm reports clear. '
-          'Distance only — does not identify the object.',
-      parameters: {'type': 'object', 'properties': {}},
-    ),
-    (args) async =>
-        const NearObstacleResult(distanceMm: '1450', obstacle: 'false'),
+    (args) async {
+      final snapshot = await SensorHubService.instance.fetchSnapshot();
+      return BrightnessResult(
+        lux: snapshot.lux,
+        classification: snapshot.brightnessClass,
+      );
+    },
   );
 
   r.register(
@@ -380,12 +373,15 @@ void registerDefaultTools() {
           'at altitude/floor change (relative only). Air only — no gas/smoke detection.',
       parameters: {'type': 'object', 'properties': {}},
     ),
-    (args) async => const EnvironmentStatusResult(
-      temperatureC: '23.4',
-      humidityPercent: '46.0',
-      pressureHpa: '1012.8',
-      comfort: 'comfortable',
-    ),
+    (args) async {
+      final snapshot = await SensorHubService.instance.fetchSnapshot();
+      return EnvironmentStatusResult(
+        temperatureC: snapshot.temperatureC,
+        humidityPercent: snapshot.humidityPercent,
+        pressureHpa: snapshot.pressureHpa,
+        comfort: snapshot.comfort,
+      );
+    },
   );
 
   r.register(
@@ -398,18 +394,53 @@ void registerDefaultTools() {
           'safety critical, check on user first. Movement only — no light/temp.',
       parameters: {'type': 'object', 'properties': {}},
     ),
-    (args) async => const MotionStateResult(
-      stable: 'true',
-      tilt: 'upright',
-      motion: 'still',
+    (args) async {
+      final snapshot = await SensorHubService.instance.fetchSnapshot();
+      return MotionStateResult(
+        stable: snapshot.stable,
+        tilt: snapshot.tilt,
+        motion: snapshot.motion,
+        accelX: snapshot.accelX,
+        accelY: snapshot.accelY,
+        accelZ: snapshot.accelZ,
+        gyroX: snapshot.gyroX,
+        gyroY: snapshot.gyroY,
+        gyroZ: snapshot.gyroZ,
+      );
+    },
+  );
+
+  r.register(
+    const Tool(
+      name: 'read_inertial_sensors',
+      description:
+          'Reads raw accelerometer and gyroscope values from the external MPU6050. '
+          'Returns accel_mps2 x/y/z, gyro_dps x/y/z, plus derived stable, tilt, '
+          'and motion labels. Use for requests about acceleration, gyro, tilt, '
+          'orientation, shaking, walking, falling, or device movement.',
+      parameters: {'type': 'object', 'properties': {}},
     ),
+    (args) async {
+      final snapshot = await SensorHubService.instance.fetchSnapshot();
+      return InertialSensorResult(
+        accelX: snapshot.accelX,
+        accelY: snapshot.accelY,
+        accelZ: snapshot.accelZ,
+        gyroX: snapshot.gyroX,
+        gyroY: snapshot.gyroY,
+        gyroZ: snapshot.gyroZ,
+        stable: snapshot.stable,
+        tilt: snapshot.tilt,
+        motion: snapshot.motion,
+      );
+    },
   );
 
   r.register(
     const Tool(
       name: 'capture_image',
       description:
-          'Opens the phone camera and captures a fresh photo of what is in front '
+          'Uses the ESP32-CAM to capture a fresh photo of what is in front '
           'of the user, then sends that image back so you can analyse it. Call '
           'whenever visible evidence would help answer the question (the user is '
           'asking about their surroundings, an object, text, weather outside, '
@@ -429,7 +460,7 @@ void registerDefaultTools() {
     ),
     (args) async {
       final reason = ((args['reason'] as String?) ?? '').trim();
-      return _captureFromCamera(reason);
+      return SensorHubService.instance.captureImage(reason);
     },
   );
 
@@ -453,44 +484,25 @@ void registerDefaultTools() {
     },
   );
 
-  // ── Rehberde kişi ara ─────────────────────────────────────────────────────
   r.register(
     const Tool(
       name: 'search_contact',
       description:
           'Looks up phone numbers in the device contacts. '
-          'CALL THIS TOOL whenever the user wants to call, phone, or reach someone. '
-          'Never ask the user for a phone number, never invent one. '
-          '\n\nQUERY — pass ONLY the person\'s name or relation, in its base/dictionary form, '
-          'as it would most likely appear in the contact list. Strip any verbs and grammatical '
-          'markers from the user\'s sentence yourself. Examples:'
-          '\n  • "annemi ara" → "anne"   (not "annemi", not "ara annemi")'
-          '\n  • "call my mom" → "mom"'
-          '\n  • "llama a mi mamá" → "mamá"'
-          '\n  • "ruf meine Mutter an" → "Mutter"'
-          '\n  • "Ahmet\'i ara" → "Ahmet"'
-          '\nDo NOT pass the full sentence. Just the person/relation name in base form.'
-          '\n\nAFTER THE TOOL RETURNS — respond in the SAME language the user wrote in '
-          '(Turkish input → Turkish reply, English input → English reply, etc.).'
-          '\n• If 0 contacts: tell the user no match was found, do not ask for a number.'
-          '\n• If exactly 1 contact: ALWAYS ASK FOR CONFIRMATION before calling. Say the '
-          'matched contact name and ask the user to confirm in their language (e.g. '
-          '"Rehberde Anne buldum, arayayım mı?" / "I found Mom in your contacts, '
-          'should I call?"). Do NOT call make_call yet — wait for an affirmative reply '
-          '("evet", "ara", "yes", "call", etc.). Only after the user confirms, call '
-          'make_call with that phone and name. If the user declines, do nothing.'
-          '\n• If 2 or more contacts: list them numbered like "1 X, 2 Y, 3 Z" and ask the '
-          'user to say the number of the one to call (e.g. "Birden fazla kişi buldum: 1 Anne, '
-          '2 Anneanne, 3 Babaanne. Hangisini aramak istediğinin numarasını söyle." / '
-          '"I found several: 1 Mom, 2 Grandma, 3 Aunt. Say the number of the one you want."). '
-          'Do NOT call make_call yet — the app handles the user\'s numeric selection.',
+          'Call this tool whenever the user wants to call, phone, or reach someone. '
+          'Never ask the user for a phone number, and never invent one. '
+          'Pass only the person name or relation in base form, not the full sentence. '
+          'Examples: "call my mom" -> "mom"; a request to call Ahmet -> "Ahmet". '
+          'After the tool returns, let the model answer in the user language. '
+          'If there is one match, ask for confirmation before make_call. '
+          'If there are multiple matches, list them by number and ask which one to call.',
       parameters: {
         'type': 'object',
         'properties': {
           'query': {
             'type': 'string',
             'description':
-                'Root contact name to search (e.g. "anne", "baba", "abi")',
+                'Root contact name to search (for example, mom, dad, or a contact name)',
           },
         },
         'required': ['query'],
@@ -524,20 +536,13 @@ void registerDefaultTools() {
     },
   );
 
-  // ── Genel iptal / durdur ──────────────────────────────────────────────────
   r.register(
     const Tool(
       name: 'cancel_action',
       description:
           'Cancels an ongoing background action. Call this whenever the user '
-          'asks to stop, cancel, end, pause, or quit something in ANY language '
-          '(e.g. "navigasyonu durdur", "hatırlatıcıyı iptal et", "stop talking", '
-          '"cancel reminders", "yeter, sus", "hepsini durdur"). Pick the closest '
-          'target value:\n'
-          '  • "navigation" — active turn-by-turn navigation loop\n'
-          '  • "reminders" — all pending scheduled reminders\n'
-          '  • "tts" — stop the current text-to-speech playback only\n'
-          '  • "all" — cancel everything currently running',
+          'asks to stop, cancel, end, pause, or quit something in any language. '
+          'Use the closest target: navigation, reminders, tts, or all.',
       parameters: {
         'type': 'object',
         'properties': {
@@ -553,12 +558,10 @@ void registerDefaultTools() {
       final target = ((args['target'] as String?) ?? 'all')
           .toLowerCase()
           .trim();
-      // Asıl iptal işi chat_provider'da yapılır; tool sadece niyeti taşır.
       return CancelActionResult(target: target, cancelledCount: 0);
     },
   );
 
-  // ── Tarih ─────────────────────────────────────────────────────────────────
   r.register(
     const Tool(
       name: 'get_date',
@@ -568,7 +571,6 @@ void registerDefaultTools() {
     (args) async => DateResult(dateTime: DateTime.now()),
   );
 
-  // ── Saat ──────────────────────────────────────────────────────────────────
   r.register(
     const Tool(
       name: 'get_time',
@@ -578,28 +580,15 @@ void registerDefaultTools() {
     (args) async => TimeResult(dateTime: DateTime.now()),
   );
 
-  // ── Kişiyi ara ────────────────────────────────────────────────────────────
   r.register(
     const Tool(
       name: 'make_call',
       description:
-          'Initiates a phone call. Two valid sources for the number:\n'
-          '1) A literal phone number the user just spoke or typed (digits, '
-          '   possibly with spaces, dashes or "+", e.g. "117", "0532 123 45 67", '
-          '   "+90 212…", "call 911"). Do NOT call search_contact in this case — '
-          '   use the digits directly; for the name argument use a short label '
-          '   like the number itself or "Acil"/"Emergency".\n'
-          '2) A number returned earlier by search_contact for a named person.\n'
-          '\n'
-          'CRITICAL — HUMAN IN THE LOOP: Before calling make_call, ALWAYS ask the '
-          'user to confirm the number / contact in their own language '
-          '(e.g. "117\'yi arayayım mı?" / "Should I call 117?" / "Anne\'yi '
-          'arayayım mı?"). Only call make_call after the user replies '
-          'affirmatively ("evet", "ara", "yes", "call", "sí", "oui"…). If they '
-          'decline, do nothing. This applies to BOTH direct numbers AND '
-          'search_contact results — no exceptions.\n'
-          '\n'
-          'Never invent a number the user did not say.',
+          'Initiates a phone call after explicit user confirmation. Use either '
+          'a literal phone number the user just provided, or a number returned '
+          'earlier by search_contact. Never invent a number. Always ask the '
+          'user to confirm the number or contact first; call make_call only '
+          'after an affirmative reply in the user language.',
       parameters: {
         'type': 'object',
         'properties': {

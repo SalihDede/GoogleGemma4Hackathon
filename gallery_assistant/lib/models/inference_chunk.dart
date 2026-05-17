@@ -1,4 +1,3 @@
-// Lokal LiteRT ve bulut OpenRouter arka uçları için ortak yanıt parçası.
 sealed class InferenceChunk {
   const InferenceChunk();
 }
@@ -19,11 +18,10 @@ class FunctionCallChunk extends InferenceChunk {
   const FunctionCallChunk(this.name, this.args);
 }
 
-/// Bulut modu: tool zaten servis içinde koşturuldu, UI sadece göstersin.
 class ToolInvokedChunk extends InferenceChunk {
   final String name;
   final Map<String, dynamic> args;
-  final Object result; // ToolResult; tip avoidance için Object
+  final Object result;
   const ToolInvokedChunk({
     required this.name,
     required this.args,

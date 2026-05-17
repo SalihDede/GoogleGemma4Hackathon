@@ -36,7 +36,6 @@ class MessageBubble extends StatelessWidget {
             ? CrossAxisAlignment.end
             : CrossAxisAlignment.start,
         children: [
-          // Kullanıcı görseli
           if (message.hasImage && isUser) ...[
             ClipRRect(
               borderRadius: BorderRadius.circular(AppRadius.lg),
@@ -52,7 +51,6 @@ class MessageBubble extends StatelessWidget {
             const SizedBox(height: AppSpacing.xs),
           ],
 
-          // Thinking bölümü (asistan)
           if (message.hasThinking && !isUser)
             ThinkingSection(
               text: message.thinkingText!,
@@ -74,7 +72,6 @@ class MessageBubble extends StatelessWidget {
               ToolResultCard(result: message.toolResultData!),
           ],
 
-          // Ana balon — geniş ekranda max-width sınırı, M3 conversation shape.
           if (message.text.isNotEmpty)
             ConstrainedBox(
               constraints: BoxConstraints(maxWidth: bubbleMaxWidth),
@@ -117,7 +114,6 @@ class MessageBubble extends StatelessWidget {
               ),
             ),
 
-          // Backend + benchmark altyazısı (sadece yerel inference için)
           if (!isUser &&
               message.status == MessageStatus.done &&
               message.stats != null) ...[
@@ -125,7 +121,6 @@ class MessageBubble extends StatelessWidget {
             _StatsFooter(stats: message.stats!),
           ],
 
-          // Streaming göstergesi
           if (message.status == MessageStatus.streaming && message.text.isEmpty)
             Container(
               padding: const EdgeInsets.symmetric(

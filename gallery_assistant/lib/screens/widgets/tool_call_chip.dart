@@ -15,9 +15,9 @@ const _toolLabels = {
   'cancel_action': 'Cancelling action',
   'check_sensor_context': 'Checking sensors',
   'measure_brightness': 'Measuring brightness',
-  'detect_near_obstacle': 'Checking obstacle',
   'get_environment_status': 'Checking environment',
   'detect_motion_state': 'Checking motion',
+  'read_inertial_sensors': 'Reading motion sensors',
   'capture_image': 'Capturing image',
 };
 
@@ -35,9 +35,9 @@ const _toolIcons = {
   'cancel_action': Icons.cancel_outlined,
   'check_sensor_context': Icons.sensors_outlined,
   'measure_brightness': Icons.wb_sunny_outlined,
-  'detect_near_obstacle': Icons.warning_amber_outlined,
   'get_environment_status': Icons.thermostat_outlined,
   'detect_motion_state': Icons.directions_walk_outlined,
+  'read_inertial_sensors': Icons.screen_rotation_alt_outlined,
   'capture_image': Icons.photo_camera_outlined,
 };
 

@@ -1,7 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
-/// Hatırlatıcı / alarm bildirimi: kısa sistem sesi + sesli okuma.
 class NotifyService {
   NotifyService._();
   static final NotifyService instance = NotifyService._();
@@ -17,10 +16,8 @@ class NotifyService {
     _initialized = true;
   }
 
-  /// Kısa alarm sesi + ardından hatırlatıcı metnini seslendirir.
   Future<void> remind(String note, {String lang = 'en-US'}) async {
     await _ensureInit(lang: lang);
-    // 3 kısa "alert" tonu — dikkat çekici ama rahatsız etmeyen
     for (var i = 0; i < 3; i++) {
       await SystemSound.play(SystemSoundType.alert);
       await HapticFeedback.heavyImpact();

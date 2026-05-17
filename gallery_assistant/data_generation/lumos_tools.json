@@ -1,0 +1,18 @@
+[
+  {"name":"describe_scene","description":"Describe an existing image or current visual scene for a visually impaired user.","parameters":{"type":"object","properties":{"focus":{"type":"string"}}}},
+  {"name":"read_text","description":"Read visible text from an existing image or captured view.","parameters":{"type":"object","properties":{}}},
+  {"name":"identify_object","description":"Find a named object in the visual context and describe its relative position.","parameters":{"type":"object","properties":{"object":{"type":"string"}},"required":["object"]}},
+  {"name":"check_sensor_context","description":"Get a combined local sensor summary for light, near distance, temperature, humidity, pressure, and motion.","parameters":{"type":"object","properties":{}}},
+  {"name":"measure_brightness","description":"Measure ambient light and classify whether the environment is dark, dim, normal, bright, or too bright.","parameters":{"type":"object","properties":{}}},
+  {"name":"detect_near_obstacle","description":"Check whether there is a very near obstacle in front of the user using short-range distance data.","parameters":{"type":"object","properties":{}}},
+  {"name":"get_environment_status","description":"Read local temperature, humidity, pressure, and comfort status. This is not official weather.","parameters":{"type":"object","properties":{}}},
+  {"name":"detect_motion_state","description":"Check whether the device is stable, tilted, shaking, moving, or possibly dropped.","parameters":{"type":"object","properties":{}}},
+  {"name":"capture_image","description":"Capture a fresh camera image when current visual evidence is needed.","parameters":{"type":"object","properties":{"reason":{"type":"string"}}}},
+  {"name":"set_reminder","description":"Set a reminder for the user.","parameters":{"type":"object","properties":{"text":{"type":"string"},"minutes":{"type":"integer"}},"required":["text","minutes"]}},
+  {"name":"search_contact","description":"Search the user's contacts before making a phone call. Never invent phone numbers.","parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}},
+  {"name":"cancel_action","description":"Cancel an active navigation, reminder, speech, capture, or current action.","parameters":{"type":"object","properties":{"target":{"type":"string"}}}},
+  {"name":"get_date","description":"Get the current date from the device.","parameters":{"type":"object","properties":{}}},
+  {"name":"get_time","description":"Get the current time from the device.","parameters":{"type":"object","properties":{}}},
+  {"name":"make_call","description":"Start a phone call only after contact search and user confirmation.","parameters":{"type":"object","properties":{"name":{"type":"string"},"phone":{"type":"string"}},"required":["name","phone"]}}
+]
+

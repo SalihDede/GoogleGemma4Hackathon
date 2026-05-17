@@ -3,6 +3,7 @@ import 'package:flutter_gemma/flutter_gemma.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/chat_provider.dart';
+import '../services/app_settings_service.dart';
 import '../services/inference_router.dart';
 import '../services/litert_service.dart';
 import '../services/model_manager_service.dart';
@@ -24,11 +25,21 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
   String? _error;
   CancelToken? _cancelToken;
   LiteRtBackendPreference _backendPreference = LiteRtBackendPreference.auto;
+  final _hfTokenCtrl = TextEditingController();
+  final _openRouterKeyCtrl = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _loadBackendPreference();
+    _loadSettings();
+  }
+
+  @override
+  void dispose() {
+    _hfTokenCtrl.dispose();
+    _openRouterKeyCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _loadBackendPreference() async {
@@ -36,19 +47,40 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
     if (mounted) setState(() => _backendPreference = preference);
   }
 
+  Future<void> _loadSettings() async {
+    final settings = await AppSettingsService.instance.load();
+    if (!mounted) return;
+    _hfTokenCtrl.text = settings.huggingFaceToken;
+    _openRouterKeyCtrl.text = settings.openRouterApiKey;
+  }
+
+  Future<void> _saveSettings() async {
+    await AppSettingsService.instance.save(
+      huggingFaceToken: _hfTokenCtrl.text,
+      openRouterApiKey: _openRouterKeyCtrl.text,
+    );
+  }
+
   Future<void> _setBackendPreference(LiteRtBackendPreference preference) async {
     setState(() => _backendPreference = preference);
     await LiteRtService.instance.setBackendPreference(preference);
   }
 
-  void _useCloud() {
-    InferenceRouter.instance.mode = InferenceMode.cloud;
-    ref.read(chatProvider.notifier).useCloudMode();
-    _goToChat();
+  Future<void> _useCloud() async {
+    await _saveSettings();
+    if (_openRouterKeyCtrl.text.trim().isEmpty) {
+      setState(() {
+        _error = 'OpenRouter API key is required for cloud mode.';
+      });
+      return;
+    }
+    await _startDownload(afterMode: InferenceMode.cloud);
   }
 
-  Future<void> _startDownload() async {
-    InferenceRouter.instance.mode = InferenceMode.local;
+  Future<void> _startDownload({
+    InferenceMode afterMode = InferenceMode.local,
+  }) async {
+    await _saveSettings();
     setState(() {
       _phase = _Phase.downloading;
       _progress = 0;
@@ -67,7 +99,12 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
 
       if (mounted) {
         setState(() => _phase = _Phase.done);
-        ref.read(chatProvider.notifier).initModel('');
+        InferenceRouter.instance.mode = afterMode;
+        if (afterMode == InferenceMode.cloud) {
+          ref.read(chatProvider.notifier).useCloudMode();
+        } else {
+          await ref.read(chatProvider.notifier).initModel('');
+        }
         await Future.delayed(const Duration(milliseconds: 600));
         if (mounted) _goToChat();
       }
@@ -111,14 +148,17 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    return Scaffold(
-      body: SafeArea(
-        child: ResponsiveCardBody(
-          child: switch (_phase) {
-            _Phase.ready => _buildReady(theme, scheme),
-            _Phase.downloading => _buildDownloading(theme, scheme),
-            _Phase.done => _buildDone(theme, scheme),
-          },
+    return PopScope(
+      canPop: _phase != _Phase.downloading,
+      child: Scaffold(
+        body: SafeArea(
+          child: ResponsiveCardBody(
+            child: switch (_phase) {
+              _Phase.ready => _buildReady(theme, scheme),
+              _Phase.downloading => _buildDownloading(theme, scheme),
+              _Phase.done => _buildDone(theme, scheme),
+            },
+          ),
         ),
       ),
     );
@@ -173,11 +213,11 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
         FilledButton.icon(
           onPressed: _useCloud,
           icon: const Icon(Icons.cloud_rounded),
-          label: const Text('Use Cloud'),
+          label: const Text('Download Model and Use Cloud'),
         ),
         const SizedBox(height: AppSpacing.md),
         OutlinedButton.icon(
-          onPressed: _startDownload,
+          onPressed: () => _startDownload(),
           icon: const Icon(Icons.download_rounded),
           label: const Text('Download Offline Model'),
         ),
@@ -186,6 +226,12 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
           'Cloud is faster and needs internet.\nOffline mode works without internet after setup.',
           style: theme.textTheme.bodySmall,
           textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: AppSpacing.xl),
+        _ApiKeyFields(
+          huggingFaceTokenController: _hfTokenCtrl,
+          openRouterApiKeyController: _openRouterKeyCtrl,
+          scheme: scheme,
         ),
       ],
     );
@@ -213,6 +259,14 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
         Text(
           'This only needs to happen once.',
           style: theme.textTheme.bodyMedium?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        Text(
+          'Please keep LUMOS open until the download is complete.',
+          style: theme.textTheme.bodySmall?.copyWith(
             color: scheme.onSurfaceVariant,
           ),
           textAlign: TextAlign.center,
@@ -331,6 +385,63 @@ class _ErrorCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ApiKeyFields extends StatelessWidget {
+  final TextEditingController huggingFaceTokenController;
+  final TextEditingController openRouterApiKeyController;
+  final ColorScheme scheme;
+
+  const _ApiKeyFields({
+    required this.huggingFaceTokenController,
+    required this.openRouterApiKeyController,
+    required this.scheme,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'API keys',
+          style: theme.textTheme.titleMedium,
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        Text(
+          'Hugging Face token is optional for public downloads. OpenRouter key is only needed for cloud mode.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: AppSpacing.md),
+        TextField(
+          controller: huggingFaceTokenController,
+          obscureText: true,
+          decoration: const InputDecoration(
+            prefixIcon: Icon(Icons.key_rounded),
+            labelText: 'Hugging Face token',
+            hintText: 'Optional',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        TextField(
+          controller: openRouterApiKeyController,
+          obscureText: true,
+          decoration: const InputDecoration(
+            prefixIcon: Icon(Icons.cloud_queue_rounded),
+            labelText: 'OpenRouter API key',
+            hintText: 'Required for cloud mode',
+            border: OutlineInputBorder(),
+          ),
+        ),
+      ],
     );
   }
 }

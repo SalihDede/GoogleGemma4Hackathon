@@ -43,7 +43,7 @@ dependencies:
   # In-app embedded map (get_location_info)
   webview_flutter: ^4.10.0
 
-  # Headless WebView screenshot (get_directions — Google Maps rota görseli)
+  # Headless WebView screenshot (get_directions: Google Maps route image)
   flutter_inappwebview: ^6.1.5
 
   # Cihaz konumu (get_location_info)

@@ -15,9 +15,8 @@ import '../services/tool_runner.dart';
 
 const _uuid = Uuid();
 
-// UI kaç ms'de bir güncellenir (token başına değil)
 const _kUiThrottleMs = 50;
-const _kMaxLocalToolHops = 4;
+const _kMaxLocalToolHops = 8;
 const _kLocalKeepLastMessages = 6;
 const _kLocalCompactAfterMessages = 8;
 const _kLocalCompactStride = 2;
@@ -25,9 +24,9 @@ const _kMaxThinkingChars = 1200;
 const _kTextLeakedToolFallbacks = {
   'check_sensor_context',
   'measure_brightness',
-  'detect_near_obstacle',
   'get_environment_status',
   'detect_motion_state',
+  'read_inertial_sensors',
   'capture_image',
   'get_date',
   'get_time',
@@ -35,9 +34,9 @@ const _kTextLeakedToolFallbacks = {
 const _kSensorOnlyToolNames = {
   'check_sensor_context',
   'measure_brightness',
-  'detect_near_obstacle',
   'get_environment_status',
   'detect_motion_state',
+  'read_inertial_sensors',
 };
 
 class ChatState {
@@ -85,6 +84,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
   RouteResult? _activeRoute;
   final List<Timer> _reminderTimers = [];
   int _lastLocalCompactionAt = 0;
+  bool _startupPromptSent = false;
+
+  Future<void> sendStartupPrompt() async {
+    if (_startupPromptSent || !state.modelReady) return;
+    _startupPromptSent = true;
+
+    await sendMessage(text: '.');
+  }
 
   void stopNavigation() {
     _navTimer?.cancel();
@@ -103,9 +110,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   void scheduleReminder(String text, int minutes) {
     final t = Timer(Duration(minutes: minutes), () async {
-      // Alarm sesi + TTS ile direkt hatırlatma
       await NotifyService.instance.remind(text);
-      // Sohbete de bir bildirim mesajı ekle (görme engelli için yine sesli olur)
       final msg = ChatMessage(
         id: _uuid.v4(),
         role: MessageRole.assistant,
@@ -127,7 +132,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
     if (target == 'reminders' || target == 'all') {
       count += cancelAllReminders();
     }
-    // tts iptali UI katmanında flutter_tts.stop() ile yapılır.
     return count;
   }
 
@@ -137,7 +141,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
     _navTimer = Timer.periodic(const Duration(seconds: 20), (_) async {
       final r = _activeRoute;
       if (r == null) return;
-      // Yeni başlangıç = güncel cihaz konumu
       final currentOrigin =
           await RouteCaptureService.instance.currentLocationString() ??
           r.origin;
@@ -167,10 +170,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
     await sendMessage(text: prefix, imageBytes: bytes);
   }
 
-  // Throttle için son UI güncelleme zamanı
   DateTime _lastUiUpdate = DateTime.fromMillisecondsSinceEpoch(0);
 
-  // Token buffer'ını hemen değil, throttle'lı olarak UI'ya yansıt
   void _patchThrottled(
     String id, {
     required String text,
@@ -203,7 +204,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
-  /// Bulut modunu seç — yerel model indirme adımı atlanır.
   void useCloudMode() {
     InferenceRouter.instance.mode = InferenceMode.cloud;
     state = state.copyWith(modelReady: true, modelLoading: false);
@@ -253,8 +253,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
-  // Mesajdaki ilk küçük rakamı çek. Sözel sayılar (bir/one/uno…) modele bırakılır;
-  // model search_contact sonuçlarını gördüğü için make_call'u kendisi tetikler.
   Future<void> _compactLocalHistoryIfNeeded({bool force = false}) async {
     final messageCount = state.messages.length;
     if (messageCount == 0) return;
@@ -368,10 +366,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
         'Internet status: ${hasInternet ? 'online' : 'offline'} via $connectionType.',
       SensorContextResult() => 'Sensor context returned default values.',
       BrightnessResult() => 'Brightness sensor returned default values.',
-      NearObstacleResult() => 'Near obstacle sensor returned default values.',
       EnvironmentStatusResult() =>
         'Environment sensors returned default values.',
       MotionStateResult() => 'Motion sensor returned default values.',
+      InertialSensorResult() => 'Inertial sensors returned default values.',
       CaptureImageResult(:final reason, :final error) =>
         error == null
             ? 'Camera image captured: ${_compactText(reason, 80)}.'
@@ -443,18 +441,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   bool _isCurrentViewRequest(String value) {
     final text = value.toLowerCase();
-    return text.contains('ne görüyorsun') ||
-        text.contains('ne goruyorsun') ||
-        text.contains('görüyor musun') ||
-        text.contains('goruyor musun') ||
-        text.contains('önümde ne var') ||
-        text.contains('onumde ne var') ||
-        text.contains('etrafımda ne var') ||
-        text.contains('etrafimda ne var') ||
-        text.contains('karşımda ne var') ||
-        text.contains('karsimda ne var') ||
-        text.contains('what do you see') ||
+    return text.contains('what do you see') ||
         text.contains('what is in front of me') ||
+        text.contains('what is around me') ||
         text.contains("what's in front of me");
   }
 
@@ -552,7 +541,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     final textBuffer = StringBuffer();
     final thinkBuffer = StringBuffer();
     var localToolHops = 0;
-    _lastUiUpdate = DateTime.fromMillisecondsSinceEpoch(0); // throttle sıfırla
+    _lastUiUpdate = DateTime.fromMillisecondsSinceEpoch(0);
 
     try {
       await for (final response in InferenceRouter.instance.sendMessage(
@@ -561,7 +550,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
       )) {
         if (response is TextChunk) {
           textBuffer.write(response.token);
-          // Throttle: 50ms'den sık rebuild yok
           _patchThrottled(
             assistantMsg.id,
             text: _visibleAssistantText(textBuffer.toString()),
@@ -574,7 +562,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
             thinkingText: thinkBuffer.toString(),
           );
         } else if (response is ToolInvokedChunk) {
-          // Bulut: tool zaten servis içinde koşturuldu, sadece UI'da göster
           textBuffer.clear();
           _patchThrottled(assistantMsg.id, text: '');
           _patch(
@@ -583,7 +570,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
             toolResultData: response.result as ToolResult,
           );
         } else if (response is FunctionCallChunk) {
-          // Model bazen function call JSON'unu text stream'e de sızdırır — temizle
           textBuffer.clear();
           _patchThrottled(assistantMsg.id, text: '');
 
@@ -622,7 +608,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
         }
       }
 
-      // Stream bitti — son buffer'ı kesinlikle yaz + done yap
       localToolHops = await _consumeLeakedToolCall(
         assistantId: assistantMsg.id,
         textBuffer: textBuffer,
@@ -639,7 +624,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
         stats: LiteRtService.instance.lastStats,
       );
 
-      // Tool sonuçlarına göre yan etkiler
       final lastMsg = state.messages.lastWhere((m) => m.id == assistantMsg.id);
       for (final toolData in _toolResultsFor(lastMsg)) {
         await _handleToolSideEffect(toolData);
@@ -647,16 +631,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
     } catch (e, st) {
       // ignore: avoid_print
       print('[chat error] $e\n$st');
-      _patch(assistantMsg.id, text: 'Hata: $e', status: MessageStatus.error);
+      _patch(assistantMsg.id, text: 'Error: $e', status: MessageStatus.error);
     }
   }
 
   Future<void> _handleToolSideEffect(ToolResult toolData) async {
     if (toolData is CaptureImageResult && toolData.imageBytes != null) {
       await sendMessage(
-        text: toolData.reason.isEmpty
-            ? 'Here is the photo I captured. Analyse it for the previous question.'
-            : 'Here is the photo I captured (${toolData.reason}). Analyse it for the previous question.',
+        text: _captureFollowUpPrompt(toolData.reason),
         imageBytes: Uint8List.fromList(toolData.imageBytes!),
       );
     } else if (toolData is RouteResult && toolData.imageBytes != null) {
@@ -669,6 +651,21 @@ class ChatNotifier extends StateNotifier<ChatState> {
     } else if (toolData is ReminderResult) {
       scheduleReminder(toolData.text, toolData.minutes);
     }
+  }
+
+  String _captureFollowUpPrompt(String reason) {
+    if (reason == 'task:read_text') {
+      return 'OCR task: read and transcribe all visible text in this ESP32-CAM image. Answer in the user language. If no readable text is visible, say that clearly. Do not describe unrelated scene details unless they help identify the text.';
+    }
+
+    const prefix = 'task:identify_object:';
+    if (reason.startsWith(prefix)) {
+      final object = reason.substring(prefix.length).trim();
+      final target = object.isEmpty ? 'requested object' : object;
+      return 'Object search task: inspect this ESP32-CAM image and determine whether "$target" is visible. Answer in the user language. If it is visible, give its clock-face direction and approximate distance if possible. If it is not visible or uncertain, say so clearly.';
+    }
+
+    return 'Analyze this ESP32-CAM image for the previous user request. Answer directly in the user language.';
   }
 
   Future<int> _consumeToolContinuation({
@@ -770,7 +767,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
     InferenceStats? stats,
   }) {
     final msgs = state.messages;
-    // Index ile bul — tüm listeyi map etmek yerine O(1) güncelleme
     final idx = msgs.indexWhere((m) => m.id == id);
     if (idx == -1) return;
 
@@ -788,7 +784,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
     if (status != null) m.status = status;
     if (stats != null) m.stats = stats;
 
-    // Sadece değişen index'i yeni referansla kopyala
     final updated = List<ChatMessage>.of(msgs);
     updated[idx] = m;
     state = state.copyWith(messages: updated);

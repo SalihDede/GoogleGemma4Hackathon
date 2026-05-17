@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -11,9 +12,21 @@ import '../../theme/app_spacing.dart';
 
 class InputBar extends StatefulWidget {
   final bool enabled;
+  final bool canSend;
+  final bool autoListen;
+  final bool suppressListening;
+  final VoidCallback? onVoiceActivity;
   final void Function({required String text, Uint8List? imageBytes}) onSend;
 
-  const InputBar({super.key, required this.enabled, required this.onSend});
+  const InputBar({
+    super.key,
+    required this.enabled,
+    this.canSend = true,
+    this.autoListen = false,
+    this.suppressListening = false,
+    this.onVoiceActivity,
+    required this.onSend,
+  });
 
   @override
   State<InputBar> createState() => _InputBarState();
@@ -27,6 +40,12 @@ class _InputBarState extends State<InputBar> {
   Uint8List? _pendingImage;
   bool _sttAvailable = false;
   bool _listening = false;
+  bool _voicePaused = false;
+  Timer? _restartListenTimer;
+  Timer? _partialCommandTimer;
+  String _lastAutoSent = '';
+  String? _queuedVoiceText;
+  String? _pendingWakeText;
 
   @override
   void initState() {
@@ -46,14 +65,22 @@ class _InputBarState extends State<InputBar> {
       onStatus: (s) {
         // ignore: avoid_print
         print('[stt status] $s');
+        if ((s == 'done' || s == 'notListening') && mounted) {
+          setState(() => _listening = false);
+          _scheduleAutoListen();
+        }
       },
       onError: (e) {
         // ignore: avoid_print
         print('[stt error] ${e.errorMsg} permanent=${e.permanent}');
         if (mounted) setState(() => _listening = false);
+        if (!e.permanent) _scheduleAutoListen();
       },
     );
-    if (mounted) setState(() => _sttAvailable = ok);
+    if (mounted) {
+      setState(() => _sttAvailable = ok);
+      _scheduleAutoListen();
+    }
   }
 
   String _deviceSpeechLocale() {
@@ -77,42 +104,159 @@ class _InputBarState extends State<InputBar> {
     if (bytes != null && mounted) setState(() => _pendingImage = bytes);
   }
 
+  @override
+  void didUpdateWidget(covariant InputBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if ((widget.enabled && !oldWidget.enabled) ||
+        (!widget.suppressListening && oldWidget.suppressListening)) {
+      _scheduleAutoListen();
+    }
+    if (widget.canSend && !oldWidget.canSend) _sendQueuedVoiceText();
+    if ((!widget.enabled || widget.suppressListening) && _listening) {
+      _stt.stop();
+      setState(() => _listening = false);
+    }
+  }
+
   void _toggleListening() async {
     if (_listening) {
+      _voicePaused = true;
       await _stt.stop();
       setState(() => _listening = false);
+      return;
+    }
+    _voicePaused = false;
+    await _startListening();
+  }
+
+  void _scheduleAutoListen() {
+    _restartListenTimer?.cancel();
+    if (!widget.autoListen ||
+        _voicePaused ||
+        !_sttAvailable ||
+        !widget.enabled ||
+        widget.suppressListening ||
+        _listening) {
+      return;
+    }
+    _restartListenTimer = Timer(const Duration(milliseconds: 350), () {
+      if (mounted) _startListening();
+    });
+  }
+
+  Future<void> _startListening() async {
+    if (!_sttAvailable ||
+        !widget.enabled ||
+        widget.suppressListening ||
+        _listening ||
+        _voicePaused) {
       return;
     }
     setState(() => _listening = true);
     await _stt.listen(
       onResult: (result) {
         // Show partial and final speech recognition text.
-        _controller.text = result.recognizedWords;
+        final words = result.recognizedWords.trim();
+        final hasWake = _hasWakePhrase(words);
+        if (hasWake && words.isNotEmpty) widget.onVoiceActivity?.call();
+        _controller.text = hasWake ? words : '';
+        if (hasWake && !result.finalResult) {
+          _schedulePartialCommand(words);
+        }
         if (result.finalResult) {
+          _partialCommandTimer?.cancel();
+          _pendingWakeText = null;
           if (mounted) setState(() => _listening = false);
+          if (hasWake) {
+            _acceptVoiceCommand(words);
+          } else {
+            _controller.clear();
+          }
+          _scheduleAutoListen();
         }
       },
       localeId: _deviceSpeechLocale(),
-      listenFor: const Duration(seconds: 30),
-      pauseFor: const Duration(seconds: 3),
+      listenFor: const Duration(minutes: 10),
+      pauseFor: const Duration(seconds: 45),
       listenOptions: SpeechListenOptions(
         listenMode: ListenMode.dictation,
         partialResults: true,
         cancelOnError: false,
+        onDevice: true,
       ),
     );
   }
 
   void _send() {
+    if (!widget.canSend) return;
     final text = _controller.text.trim();
     if (text.isEmpty && _pendingImage == null) return;
+    _lastAutoSent = text;
     widget.onSend(text: text, imageBytes: _pendingImage);
     _controller.clear();
     setState(() => _pendingImage = null);
   }
 
+  bool _hasWakePhrase(String words) {
+    if (words.isEmpty) return false;
+    final patterns = <RegExp>[
+      RegExp(r'\blumos\b', caseSensitive: false),
+      RegExp(r'\blumus\b', caseSensitive: false),
+      RegExp(r'\blomos\b', caseSensitive: false),
+    ];
+
+    for (final pattern in patterns) {
+      final match = pattern.firstMatch(words);
+      if (match != null) return true;
+    }
+    return false;
+  }
+
+  void _acceptVoiceCommand(String text) {
+    final clean = text.trim();
+    if (clean.isEmpty || clean == _lastAutoSent) return;
+    if (widget.canSend) {
+      _sendVoiceText(clean);
+    } else {
+      _queuedVoiceText = clean;
+    }
+  }
+
+  void _schedulePartialCommand(String words) {
+    _pendingWakeText = words;
+    _partialCommandTimer?.cancel();
+    _partialCommandTimer = Timer(const Duration(milliseconds: 1200), () async {
+      final text = _pendingWakeText?.trim();
+      _pendingWakeText = null;
+      if (text == null || text.isEmpty || !_hasWakePhrase(text)) return;
+
+      _acceptVoiceCommand(text);
+      if (_listening) {
+        await _stt.stop();
+        if (mounted) setState(() => _listening = false);
+      }
+      _scheduleAutoListen();
+    });
+  }
+
+  void _sendQueuedVoiceText() {
+    final text = _queuedVoiceText?.trim();
+    if (text == null || text.isEmpty || text == _lastAutoSent) return;
+    _queuedVoiceText = null;
+    _sendVoiceText(text);
+  }
+
+  void _sendVoiceText(String text) {
+    _lastAutoSent = text;
+    widget.onSend(text: text, imageBytes: _pendingImage);
+    _controller.clear();
+    if (mounted) setState(() => _pendingImage = null);
+  }
+
   @override
   void dispose() {
+    _restartListenTimer?.cancel();
+    _partialCommandTimer?.cancel();
     _controller.dispose();
     _stt.cancel();
     super.dispose();
@@ -208,7 +352,7 @@ class _InputBarState extends State<InputBar> {
                   ),
                 ),
                 const SizedBox(width: AppSpacing.xs),
-                if (_sttAvailable && !hasContent)
+                if (_sttAvailable && (_listening || !hasContent))
                   _MicButton(
                     listening: _listening,
                     enabled: widget.enabled,
@@ -216,7 +360,7 @@ class _InputBarState extends State<InputBar> {
                   )
                 else
                   _SendButton(
-                    enabled: widget.enabled && hasContent,
+                    enabled: widget.canSend && hasContent,
                     onTap: _send,
                   ),
               ],

@@ -11,8 +11,6 @@ class RouteCaptureService {
   RouteCaptureService._();
   static final RouteCaptureService instance = RouteCaptureService._();
 
-  /// Google Maps directions URL'ini headless WebView'da yükler ve PNG döner.
-  /// API key gerekmez — public Maps URL endpoint kullanılır.
   String get _mapsUserAgent {
     return switch (defaultTargetPlatform) {
       TargetPlatform.iOS =>
@@ -44,7 +42,6 @@ class RouteCaptureService {
         userAgent: _mapsUserAgent,
       ),
       onLoadStop: (controller, _) async {
-        // Maps JS rotayı çizmesi için biraz bekle
         await Future.delayed(extraSettle);
         try {
           final bytes = await controller.takeScreenshot();
@@ -61,7 +58,6 @@ class RouteCaptureService {
     await webView.run();
     await webView.setSize(const Size(1080, 1920));
 
-    // Güvenlik timeout
     final result = await completer.future.timeout(
       const Duration(seconds: 15),
       onTimeout: () => null,
@@ -71,7 +67,6 @@ class RouteCaptureService {
     return result;
   }
 
-  /// from boşsa cihaz konumunu "lat,lng" string olarak verir.
   Future<String?> currentLocationString() async {
     try {
       final ok = await Geolocator.isLocationServiceEnabled();

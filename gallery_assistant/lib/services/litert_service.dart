@@ -60,8 +60,8 @@ class InsufficientMemoryException implements Exception {
   InsufficientMemoryException(this.availableGb, this.requiredGb);
   @override
   String toString() =>
-      'Cihaz RAM\'i yetersiz: ${availableGb.toStringAsFixed(1)} GB var, '
-      'en az ${requiredGb.toStringAsFixed(1)} GB gerekli.';
+      'Device RAM is insufficient: ${availableGb.toStringAsFixed(1)} GB available, '
+      'at least ${requiredGb.toStringAsFixed(1)} GB required.';
 }
 
 class LiteRtService {
@@ -69,11 +69,8 @@ class LiteRtService {
   static final LiteRtService instance = LiteRtService._();
 
   // Gemma-4 .task quantization ~3GB; engine + KV cache + image encoder
-  // pratikte 3.5–4.5 GB RAM ister. Daha düşük cihazlarda OOM olur.
   static const double _minRequiredRamGb = 3.5;
 
-  // Eski auto-benchmark anahtarı — bench feature'ı kaldırıldı (model cache
-  // mimarisinde bench/prod arasında çakışma → segfault). Bu key hâlâ
   // mevcutsa shader cache bozuk demektir; ilk init'te temizleriz.
   static const String _legacyBenchKey = 'lumos_fastest_backend_v1';
   static const String _stableBackendKey = 'lumos_stable_backend_v2';
@@ -98,20 +95,14 @@ class LiteRtService {
   LiteRtBackendPreference get backendPreference => _backendPreference;
   InferenceStats? get lastStats => _lastStats;
 
-  /// Cihazda Mali GPU var mı? Mali OpenCL LLM workload'larında zayıftır.
-  /// Bench listesini sıralarken kullanırız; karar yine ölçüme dayalı olur.
-  /// Önceki sürümlerdeki auto-benchmark feature'ı flutter_gemma'nın paylaşılan
-  /// shader cache'ini bozdu (bench=512ctx, prod=4096ctx çakışması → SIGSEGV).
   /// Bu cihazlarda support dir'i tek seferlik silip pref key'i temizleriz.
   Future<void> _migrateLegacyBenchCache() async {
     final prefs = await SharedPreferences.getInstance();
     if (!prefs.containsKey(_legacyBenchKey)) return;
 
-    debugPrint('[migrate] eski bench cache tespit edildi, temizleniyor');
+    debugPrint('[migrate] legacy bench cache detected, cleaning');
     try {
       final dir = await getApplicationSupportDirectory();
-      // Sadece .xnnpack_cache ve OpenCL serialized dosyalarını sil — model
-      // dosyasına dokunma (yeniden indirilmez).
       await for (final ent in dir.list()) {
         final name = ent.path.split(Platform.pathSeparator).last;
         if (name.contains('xnnpack_cache') ||
@@ -120,12 +111,12 @@ class LiteRtService {
             name.endsWith('.bin') && !name.contains('gemma')) {
           try {
             await ent.delete(recursive: true);
-            debugPrint('[migrate] silindi: $name');
+            debugPrint('[migrate] deleted: $name');
           } catch (_) {}
         }
       }
     } catch (e) {
-      debugPrint('[migrate] cache temizleme hatası: $e');
+      debugPrint('[migrate] cache cleanup error: $e');
     }
     await prefs.remove(_legacyBenchKey);
   }
@@ -216,7 +207,6 @@ class LiteRtService {
     }
   }
 
-  /// Android'de /proc/meminfo'dan toplam RAM'i okur. Diğer platformlarda null.
   Future<double?> _readDeviceTotalRamGb() async {
     if (!Platform.isAndroid) return null;
     try {
@@ -230,13 +220,10 @@ class LiteRtService {
     }
   }
 
-  // Model zaten indirilip active set edilmiş olarak gelir (setup_screen veya
-  // model_manager_service tarafından). Bu metod sadece engine'i yükler.
   Future<void> initialize({required String modelPath}) async {
     if (_initialized || _loading) return;
     _loading = true;
     try {
-      // 1) RAM guard — modeli açmadan önce cihaz RAM'i yeterli mi?
       final ramGb = await _readDeviceTotalRamGb();
       if (ramGb != null && ramGb < _minRequiredRamGb) {
         throw InsufficientMemoryException(ramGb, _minRequiredRamGb);
@@ -245,7 +232,7 @@ class LiteRtService {
       // 1.5) Eski bench cache'ini varsa temizle (segfault recovery).
       await _migrateLegacyBenchCache();
 
-      // 2) Backend secimi: once son stabil backend denenir, sonra fallback.
+      // 2) Backend selection: try the latest stable backend first, then fallback.
       // Sentetik benchmark yok; gercek isteklerden EWMA profil topluyoruz.
       final preference = await loadBackendPreference();
       final stableBackend = preference == LiteRtBackendPreference.auto
@@ -282,7 +269,7 @@ class LiteRtService {
         }
       }
       if (_model == null) {
-        throw StateError('Hiçbir backend modeli yükleyemedi: $lastError');
+        throw StateError('No backend model could be loaded: $lastError');
       }
 
       _initialized = true;
@@ -291,16 +278,12 @@ class LiteRtService {
     }
   }
 
-  // Mesaj gönder, ModelResponse stream'i döner.
-  // TextResponse → metin token'ı
-  // ThinkingResponse → düşünce token'ı
-  // FunctionCallResponse → tool çağrısı (ileride)
   Stream<ModelResponse> sendMessage({
     required String text,
     Uint8List? imageBytes,
   }) async* {
     if (_model == null) {
-      yield* Stream.error(StateError('Model henüz yüklenmedi.'));
+      yield* Stream.error(StateError('Model has not been loaded yet.'));
       return;
     }
 
@@ -313,9 +296,6 @@ class LiteRtService {
 
     await chat.addQuery(msg);
 
-    // Benchmark: TTFT + decode tok/s ölç. Token sayısını text-chunk
-    // sayısıyla yaklaşık olarak alıyoruz (flutter_gemma her TextResponse'da
-    // ~1 sub-word veriyor, thinking chunk'ları sayma dışı).
     yield* _generateAndTrackStats(
       chat,
       plan: plan,
@@ -331,7 +311,7 @@ class LiteRtService {
     final chat = _chat;
     if (chat == null) {
       yield* Stream.error(
-        StateError('Tool sonucu icin aktif LiteRT sohbeti yok.'),
+        StateError('There is no active LiteRT chat for the tool result.'),
       );
       return;
     }
@@ -420,7 +400,7 @@ class LiteRtService {
   }) async {
     final model = _model;
     if (model == null) {
-      throw StateError('Model henuz yuklenmedi.');
+      throw StateError('Model has not been loaded yet.');
     }
 
     final plan = LiteRtPromptBuilder.build(

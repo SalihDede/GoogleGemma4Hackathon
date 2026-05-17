@@ -7,6 +7,8 @@ import 'package:flutter_tts/flutter_tts.dart';
 
 import '../models/message.dart';
 import '../providers/chat_provider.dart';
+import '../services/app_settings_service.dart';
+import '../services/inference_router.dart';
 import '../services/litert_service.dart';
 import '../theme/app_spacing.dart';
 import '../theme/breakpoints.dart';
@@ -34,16 +36,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final _tts = FlutterTts();
   bool _ttsReady = false;
   String? _ttsMessageId;
+  String? _ttsSuppressedMessageId;
   int _ttsOffset = 0;
   int _ttsRun = 0;
   String _ttsPendingText = '';
   Future<void> _ttsQueue = Future.value();
+  Timer? _ttsResumeTimer;
+  bool _ttsOutputActive = false;
+  bool _askedForApiKeys = false;
 
   @override
   void initState() {
     super.initState();
     _initTts();
     unawaited(ref.read(chatProvider.notifier).loadBackendPreference());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_promptForApiKeysIfNeeded());
+    });
   }
 
   Future<void> _initTts() async {
@@ -52,6 +61,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     await _tts.setVolume(1.0);
     await _tts.awaitSpeakCompletion(true);
     if (mounted) setState(() => _ttsReady = true);
+    _sendStartupPromptIfReady();
   }
 
   String _deviceTtsLanguage() {
@@ -76,7 +86,25 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     _ttsOffset = 0;
     _ttsPendingText = '';
     _ttsQueue = Future.value();
+    _ttsResumeTimer?.cancel();
+    if (_ttsOutputActive && mounted) {
+      setState(() => _ttsOutputActive = false);
+    }
     if (stop) unawaited(_tts.stop());
+  }
+
+  void _sendStartupPromptIfReady() {
+    if (!_ttsReady) return;
+    final chat = ref.read(chatProvider);
+    if (!chat.modelReady) return;
+    unawaited(ref.read(chatProvider.notifier).sendStartupPrompt());
+  }
+
+  void _stopTtsForVoiceInput() {
+    if (_ttsMessageId != null) {
+      _ttsSuppressedMessageId = _ttsMessageId;
+    }
+    _resetStreamingTts(stop: true);
   }
 
   void _handleTtsSnapshot(_TtsSnapshot next) {
@@ -86,6 +114,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       return;
     }
     if (!next.isAssistant || next.id == null) return;
+
+    if (_ttsSuppressedMessageId != null && next.id != _ttsSuppressedMessageId) {
+      _ttsSuppressedMessageId = null;
+    }
+    if (next.id == _ttsSuppressedMessageId) return;
 
     if (_ttsMessageId != next.id) {
       _resetStreamingTts(stop: true);
@@ -144,10 +177,25 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     _ttsQueue = _ttsQueue.then((_) async {
       if (!mounted || run != _ttsRun) return;
       if (!ref.read(chatProvider).ttsEnabled) return;
+      _ttsResumeTimer?.cancel();
+      if (!_ttsOutputActive) {
+        setState(() => _ttsOutputActive = true);
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      if (!mounted || run != _ttsRun) return;
       try {
         await _tts.speak(text);
       } catch (_) {
         // Some engines reject interrupted or very short chunks.
+      } finally {
+        if (mounted && run == _ttsRun) {
+          _ttsResumeTimer?.cancel();
+          _ttsResumeTimer = Timer(const Duration(milliseconds: 550), () {
+            if (mounted && run == _ttsRun) {
+              setState(() => _ttsOutputActive = false);
+            }
+          });
+        }
       }
     });
   }
@@ -164,9 +212,96 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     });
   }
 
+  Future<void> _promptForApiKeysIfNeeded() async {
+    if (_askedForApiKeys || !mounted) return;
+    _askedForApiKeys = true;
+    final settings = await AppSettingsService.instance.load();
+    if (!mounted) return;
+    if (settings.hasHuggingFaceToken && settings.hasOpenRouterApiKey) return;
+    await _showApiKeyDialog(force: true);
+  }
+
+  Future<void> _showApiKeyDialog({bool force = false}) async {
+    final settings = await AppSettingsService.instance.load();
+    if (!mounted) return;
+
+    final hfCtrl = TextEditingController(text: settings.huggingFaceToken);
+    final openRouterCtrl = TextEditingController(
+      text: settings.openRouterApiKey,
+    );
+
+    final result = await showDialog<({String hfToken, String openRouterKey})>(
+      context: context,
+      barrierDismissible: !force,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('API keys'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: hfCtrl,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(Icons.key_rounded),
+                  labelText: 'Hugging Face token',
+                  hintText: 'Optional',
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              TextField(
+                controller: openRouterCtrl,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(Icons.cloud_queue_rounded),
+                  labelText: 'OpenRouter API key',
+                  hintText: 'Required for cloud mode',
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(force ? 'Skip' : 'Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(dialogContext, (
+                hfToken: hfCtrl.text.trim(),
+                openRouterKey: openRouterCtrl.text.trim(),
+              ));
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    hfCtrl.dispose();
+    openRouterCtrl.dispose();
+
+    if (result == null || !mounted) return;
+
+    await AppSettingsService.instance.save(
+      huggingFaceToken: result.hfToken,
+      openRouterApiKey: result.openRouterKey,
+    );
+    if (!mounted) return;
+
+    if (result.openRouterKey.isNotEmpty) {
+      InferenceRouter.instance.mode = InferenceMode.cloud;
+      ref.read(chatProvider.notifier).useCloudMode();
+    } else if (LiteRtService.instance.isReady) {
+      InferenceRouter.instance.mode = InferenceMode.local;
+    }
+  }
+
   @override
   void dispose() {
     _scrollCtrl.dispose();
+    _ttsResumeTimer?.cancel();
     _resetStreamingTts(stop: true);
     super.dispose();
   }
@@ -176,11 +311,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final chatState = ref.watch(chatProvider);
     final notifier = ref.read(chatProvider.notifier);
 
-    // Sadece mesaj sayısı değiştiğinde scroll — her token'da değil
     ref.listen<int>(
       chatProvider.select((s) => s.messages.length),
       (_, _) => _scrollToBottom(),
     );
+
+    ref.listen<bool>(chatProvider.select((s) => s.modelReady), (_, ready) {
+      if (ready) _sendStartupPromptIfReady();
+    });
 
     ref.listen<_TtsSnapshot>(
       chatProvider.select((s) {
@@ -241,6 +379,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 .toList(),
           ),
           IconButton(
+            tooltip: 'API keys',
+            icon: const Icon(Icons.vpn_key_rounded),
+            onPressed: isStreaming ? null : () => _showApiKeyDialog(),
+          ),
+          IconButton(
             tooltip: chatState.ttsEnabled
                 ? 'Turn speech off'
                 : 'Turn speech on',
@@ -265,13 +408,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       ),
       body: Column(
         children: [
-          // Model yükleme banner
           if (chatState.modelLoading) _ModelLoadingBanner(scheme: scheme),
 
           if (chatState.modelError != null)
             _ErrorBanner(error: chatState.modelError!, scheme: scheme),
 
-          // Mesaj listesi (geniş ekranda ortalanmış, max-width okunabilir)
           Expanded(
             child: chatState.messages.isEmpty
                 ? _EmptyState(modelReady: chatState.modelReady)
@@ -293,10 +434,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
           const Divider(height: 1),
 
-          // Giriş çubuğu — geniş ekranda da ortalanmış
           ResponsiveBody(
             child: InputBar(
-              enabled: chatState.modelReady && !isStreaming,
+              enabled: chatState.modelReady,
+              canSend: chatState.modelReady && !isStreaming,
+              autoListen: true,
+              suppressListening: _ttsOutputActive,
+              onVoiceActivity: _stopTtsForVoiceInput,
               onSend: ({required String text, Uint8List? imageBytes}) {
                 notifier.sendMessage(text: text, imageBytes: imageBytes);
               },

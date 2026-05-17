@@ -9,7 +9,6 @@ class ImageService {
   ImageService._();
   static final ImageService instance = ImageService._();
 
-  // Dosyadan oku, 768px'e küçült, JPEG'e çevir, model için hazır Uint8List döner.
   Future<Uint8List?> prepareForModel(File file) async {
     try {
       final raw = await file.readAsBytes();
@@ -28,10 +27,9 @@ class ImageService {
   }
 }
 
-// Ağır iş (decode/resize/encode) UI thread'ini kilitlemesin diye isolate'ta çalışır.
 Uint8List _resizeIsolate(Uint8List raw) {
   final decoded = img.decodeImage(raw);
-  if (decoded == null) throw Exception('Görüntü çözümlenemedi');
+  if (decoded == null) throw Exception('Image could not be decoded');
 
   if (decoded.width <= _maxDimension && decoded.height <= _maxDimension) {
     return Uint8List.fromList(img.encodeJpg(decoded, quality: _jpegQuality));

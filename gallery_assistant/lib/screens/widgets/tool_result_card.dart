@@ -32,20 +32,21 @@ class ToolResultCard extends StatelessWidget {
         title: 'Sensor context',
         readings: {
           'lux': r.lux,
-          'distance_mm': r.distanceMm,
           'temperature_c': r.temperatureC,
           'humidity_percent': r.humidityPercent,
           'pressure_hpa': r.pressureHpa,
           'motion': r.motion,
+          'accel_x': r.accelX,
+          'accel_y': r.accelY,
+          'accel_z': r.accelZ,
+          'gyro_x': r.gyroX,
+          'gyro_y': r.gyroY,
+          'gyro_z': r.gyroZ,
         },
       ),
       BrightnessResult r => _SensorReadingsCard(
         title: 'Brightness',
         readings: {'lux': r.lux, 'classification': r.classification},
-      ),
-      NearObstacleResult r => _SensorReadingsCard(
-        title: 'Near obstacle',
-        readings: {'distance_mm': r.distanceMm, 'obstacle': r.obstacle},
       ),
       EnvironmentStatusResult r => _SensorReadingsCard(
         title: 'Environment',
@@ -58,7 +59,31 @@ class ToolResultCard extends StatelessWidget {
       ),
       MotionStateResult r => _SensorReadingsCard(
         title: 'Motion state',
-        readings: {'stable': r.stable, 'tilt': r.tilt, 'motion': r.motion},
+        readings: {
+          'stable': r.stable,
+          'tilt': r.tilt,
+          'motion': r.motion,
+          'accel_x': r.accelX,
+          'accel_y': r.accelY,
+          'accel_z': r.accelZ,
+          'gyro_x': r.gyroX,
+          'gyro_y': r.gyroY,
+          'gyro_z': r.gyroZ,
+        },
+      ),
+      InertialSensorResult r => _SensorReadingsCard(
+        title: 'Inertial sensors',
+        readings: {
+          'accel_x': r.accelX,
+          'accel_y': r.accelY,
+          'accel_z': r.accelZ,
+          'gyro_x': r.gyroX,
+          'gyro_y': r.gyroY,
+          'gyro_z': r.gyroZ,
+          'stable': r.stable,
+          'tilt': r.tilt,
+          'motion': r.motion,
+        },
       ),
       CaptureImageResult r => _CaptureImageCard(result: r),
       RouteResult r => _RouteCard(result: r),
@@ -76,7 +101,6 @@ class ToolResultCard extends StatelessWidget {
   }
 }
 
-// ── Ortak kart çerçevesi ────────────────────────────────────────────────────
 class _CardFrame extends StatelessWidget {
   final IconData icon;
   final String title;
@@ -142,7 +166,6 @@ class _CardFrame extends StatelessWidget {
   }
 }
 
-// ── Sahne betimi ─────────────────────────────────────────────────────────────
 class _SceneCard extends StatelessWidget {
   final SceneResult result;
   const _SceneCard({required this.result});
@@ -161,7 +184,6 @@ class _SceneCard extends StatelessWidget {
   }
 }
 
-// ── Metin okuma ──────────────────────────────────────────────────────────────
 class _TextReadCard extends StatelessWidget {
   final TextReadResult result;
   const _TextReadCard({required this.result});
@@ -225,7 +247,6 @@ class _TextReadCard extends StatelessWidget {
   }
 }
 
-// ── Nesne tanımlama ──────────────────────────────────────────────────────────
 class _ObjectCard extends StatelessWidget {
   final ObjectFoundResult result;
   const _ObjectCard({required this.result});
@@ -271,7 +292,6 @@ class _ObjectCard extends StatelessWidget {
   }
 }
 
-// ── Konum bilgisi (gömülü harita) ───────────────────────────────────────────
 class _LocationCard extends StatefulWidget {
   final LocationResult result;
   const _LocationCard({required this.result});
@@ -352,7 +372,6 @@ class _LocationCardState extends State<_LocationCard> {
   }
 }
 
-// ── Hatırlatıcı ──────────────────────────────────────────────────────────────
 class _ReminderCard extends StatefulWidget {
   final ReminderResult result;
   const _ReminderCard({required this.result});
@@ -463,7 +482,6 @@ class _ReminderCardState extends State<_ReminderCard> {
   }
 }
 
-// ── Rehber arama sonucu — teyit bekleniyor ───────────────────────────────────
 class _ContactSearchCard extends StatelessWidget {
   final ContactSearchResult result;
   const _ContactSearchCard({required this.result});
@@ -593,7 +611,6 @@ class _ContactSearchCard extends StatelessWidget {
   }
 }
 
-// ── Tarih ────────────────────────────────────────────────────────────────────
 class _DateCard extends StatelessWidget {
   final DateResult result;
   const _DateCard({required this.result});
@@ -641,7 +658,6 @@ class _DateCard extends StatelessWidget {
   }
 }
 
-// ── Saat ─────────────────────────────────────────────────────────────────────
 class _TimeCard extends StatelessWidget {
   final TimeResult result;
   const _TimeCard({required this.result});
@@ -668,7 +684,6 @@ class _TimeCard extends StatelessWidget {
   }
 }
 
-// ── Arama başlatıldı ─────────────────────────────────────────────────────────
 class _InternetStatusCard extends StatelessWidget {
   final InternetConnectionStatusResult result;
   const _InternetStatusCard({required this.result});
@@ -713,7 +728,6 @@ class _SensorReadingsCard extends StatelessWidget {
   String _labelFor(String key) {
     return switch (key) {
       'lux' => 'light',
-      'distance_mm' => 'distance',
       'temperature_c' => 'temperature',
       'humidity_percent' => 'humidity',
       'pressure_hpa' => 'pressure',
@@ -732,7 +746,6 @@ class _SensorReadingsCard extends StatelessWidget {
     if (raw.isEmpty) return 'unknown';
     return switch (key) {
       'lux' => '$raw lux',
-      'distance_mm' => '$raw mm',
       'temperature_c' => '$raw C',
       'humidity_percent' => '$raw%',
       'pressure_hpa' => '$raw hPa',
@@ -873,7 +886,6 @@ class _CallResultCardState extends State<_CallResultCard>
       accentColor: Colors.green,
       child: Row(
         children: [
-          // Nabız animasyonu
           AnimatedBuilder(
             animation: _pulse,
             builder: (_, child) =>
@@ -928,7 +940,6 @@ class _CallResultCardState extends State<_CallResultCard>
   }
 }
 
-// ── A→B Rota kartı ──────────────────────────────────────────────────────────
 class _RouteCard extends StatelessWidget {
   final RouteResult result;
   const _RouteCard({required this.result});

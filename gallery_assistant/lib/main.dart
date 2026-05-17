@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'providers/chat_provider.dart';
 import 'screens/chat_screen.dart';
 import 'screens/setup_screen.dart';
+import 'services/cloud_inference_service.dart';
 import 'services/model_manager_service.dart';
 import 'services/tool_runner.dart';
 import 'theme/app_theme.dart';
@@ -35,7 +36,7 @@ class GalleryAssistantApp extends ConsumerWidget {
   }
 }
 
-// Açılışta model kurulu mu kontrol et → uygun ekrana yönlendir
+// Check whether the model is installed at startup and route accordingly.
 class _AppStartup extends ConsumerStatefulWidget {
   const _AppStartup();
 
@@ -58,11 +59,14 @@ class _AppStartupState extends ConsumerState<_AppStartup> {
     if (!mounted) return;
 
     if (installed) {
-      // Yerel model kurulu: hem buluta (öncelik) hem yerele (fallback) hazırla.
-      await ModelManagerService.instance.installOrActivate();
+      // Local model is installed: keep startup independent of internet.
+      await ModelManagerService.instance.activateInstalled();
       if (!mounted) return;
-      ref.read(chatProvider.notifier).useCloudMode();
-      // Yerel engine LAZY: sadece internet yokken ilk mesajda yüklenecek.
+      if (await CloudInferenceService.instance.isConfigured()) {
+        ref.read(chatProvider.notifier).useCloudMode();
+      } else {
+        await ref.read(chatProvider.notifier).initModel('');
+      }
       setState(() {
         _modelInstalled = true;
         _checking = false;
@@ -70,7 +74,7 @@ class _AppStartupState extends ConsumerState<_AppStartup> {
       return;
     }
 
-    // Model kurulu değil: internet varsa setup (indirme) ekranı, yoksa hata.
+    // Model is not installed: show setup when online; otherwise show an error.
     final online = await _hasInternet();
     if (!mounted) return;
     setState(() {
@@ -83,8 +87,8 @@ class _AppStartupState extends ConsumerState<_AppStartup> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'İnternet yok ve yerel model indirilmemiş. '
-              'Lütfen internete bağlanıp modeli indirin.',
+              'No internet connection and the local model has not been downloaded. '
+              'Please connect to the internet and download the model.',
             ),
           ),
         );
@@ -94,8 +98,9 @@ class _AppStartupState extends ConsumerState<_AppStartup> {
 
   Future<bool> _hasInternet() async {
     try {
-      final result = await InternetAddress.lookup('huggingface.co')
-          .timeout(const Duration(seconds: 3));
+      final result = await InternetAddress.lookup(
+        'huggingface.co',
+      ).timeout(const Duration(seconds: 3));
       return result.isNotEmpty && result.first.rawAddress.isNotEmpty;
     } catch (_) {
       return false;
@@ -159,7 +164,7 @@ class _SplashScreen extends StatelessWidget {
   }
 }
 
-/// LUMOS marka işareti — yumuşak parıltılı dairesel rozet.
+/// LUMOS brand mark: a softly glowing circular badge.
 class _BrandMark extends StatelessWidget {
   final ColorScheme scheme;
   const _BrandMark({required this.scheme});
@@ -185,12 +190,7 @@ class _BrandMark extends StatelessWidget {
           ),
         ],
       ),
-      child: Icon(
-        Icons.auto_awesome_rounded,
-        size: 44,
-        color: scheme.primary,
-      ),
+      child: Icon(Icons.auto_awesome_rounded, size: 44, color: scheme.primary),
     );
   }
 }
-

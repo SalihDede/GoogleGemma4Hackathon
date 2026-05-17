@@ -38,7 +38,6 @@ class LocationResult extends ToolResult {
     return 'https://www.google.com/maps/search/?api=1&query=$q';
   }
 
-  // Embed (iframe) URL — API key gerektirmez, app içi WebView'da çalışır.
   String get mapsEmbedUrl {
     final q = Uri.encodeComponent(query);
     if (lat != null && lng != null) {
@@ -54,33 +53,29 @@ class ReminderResult extends ToolResult {
   const ReminderResult({required this.text, required this.minutes});
 }
 
-// Rehberde bulunan kişi
 class ContactEntry {
   final String name;
   final String phone; // E.164 veya ham format
   const ContactEntry({required this.name, required this.phone});
 }
 
-// Arama sonucu — teyit bekleniyor
 class ContactSearchResult extends ToolResult {
-  final String query; // normalise edilmiş arama kelimesi
+  final String query;
   final List<ContactEntry> contacts;
   const ContactSearchResult({required this.query, required this.contacts});
 }
 
-// Arama başlatıldı
 class CallResult extends ToolResult {
   final String name;
   final String phone;
   const CallResult({required this.name, required this.phone});
 }
 
-// Rota — Google Maps directions ekran görüntüsü (görme engelli için anlatılacak)
 class RouteResult extends ToolResult {
   final String origin;
   final String destination;
   final String mode; // walking | driving | transit | bicycling
-  final List<int>? imageBytes; // screenshot — null ise hata
+  final List<int>? imageBytes;
   final String? error;
   const RouteResult({
     required this.origin,
@@ -97,16 +92,17 @@ class RouteResult extends ToolResult {
   }
 }
 
-// Navigasyon durduruldu (eski — geriye dönük uyumluluk)
 class NavigationStoppedResult extends ToolResult {
   const NavigationStoppedResult();
 }
 
-// Genel iptal sonucu — model "neyi durdurduğumu söyle" için kullanır
 class CancelActionResult extends ToolResult {
   final String target; // 'navigation' | 'reminders' | 'tts' | 'all'
-  final int cancelledCount; // kaç tane gerçek iş iptal edildi
-  const CancelActionResult({required this.target, required this.cancelledCount});
+  final int cancelledCount;
+  const CancelActionResult({
+    required this.target,
+    required this.cancelledCount,
+  });
 }
 
 // Tarih sorgusu
@@ -136,18 +132,28 @@ class InternetConnectionStatusResult extends ToolResult {
 
 class SensorContextResult extends ToolResult {
   final String lux;
-  final String distanceMm;
   final String temperatureC;
   final String humidityPercent;
   final String pressureHpa;
   final String motion;
+  final String accelX;
+  final String accelY;
+  final String accelZ;
+  final String gyroX;
+  final String gyroY;
+  final String gyroZ;
   const SensorContextResult({
     this.lux = '',
-    this.distanceMm = '',
     this.temperatureC = '',
     this.humidityPercent = '',
     this.pressureHpa = '',
     this.motion = '',
+    this.accelX = '',
+    this.accelY = '',
+    this.accelZ = '',
+    this.gyroX = '',
+    this.gyroY = '',
+    this.gyroZ = '',
   });
 }
 
@@ -155,12 +161,6 @@ class BrightnessResult extends ToolResult {
   final String lux;
   final String classification;
   const BrightnessResult({this.lux = '', this.classification = ''});
-}
-
-class NearObstacleResult extends ToolResult {
-  final String distanceMm;
-  final String obstacle;
-  const NearObstacleResult({this.distanceMm = '', this.obstacle = ''});
 }
 
 class EnvironmentStatusResult extends ToolResult {
@@ -187,7 +187,42 @@ class MotionStateResult extends ToolResult {
   final String stable;
   final String tilt;
   final String motion;
+  final String accelX;
+  final String accelY;
+  final String accelZ;
+  final String gyroX;
+  final String gyroY;
+  final String gyroZ;
   const MotionStateResult({
+    this.stable = '',
+    this.tilt = '',
+    this.motion = '',
+    this.accelX = '',
+    this.accelY = '',
+    this.accelZ = '',
+    this.gyroX = '',
+    this.gyroY = '',
+    this.gyroZ = '',
+  });
+}
+
+class InertialSensorResult extends ToolResult {
+  final String accelX;
+  final String accelY;
+  final String accelZ;
+  final String gyroX;
+  final String gyroY;
+  final String gyroZ;
+  final String stable;
+  final String tilt;
+  final String motion;
+  const InertialSensorResult({
+    this.accelX = '',
+    this.accelY = '',
+    this.accelZ = '',
+    this.gyroX = '',
+    this.gyroY = '',
+    this.gyroZ = '',
     this.stable = '',
     this.tilt = '',
     this.motion = '',
