@@ -233,6 +233,14 @@ LUMOS is designed for sensitive accessibility contexts, so it follows conservati
 - flutter_contacts
 - ESP32-CAM and ESP32 sensor expansion
 
+## License
+
+This project is licensed under the Creative Commons Attribution 4.0 International License (CC BY 4.0).
+
+You are free to share and adapt the project with attribution. See: https://creativecommons.org/licenses/by/4.0/
+
+Gemma models, third-party libraries, APIs, datasets, and external assets remain governed by their own licenses and terms, including Google's Gemma Terms of Use, Flutter package licenses, OpenRouter terms, and Hugging Face-hosted model asset licenses.
+
 ## Competition Summary
 
 LUMOS demonstrates how Gemini/Gemma-style AI can move beyond chat and become an accessibility agent connected to real mobile and hardware capabilities. It combines cloud intelligence, offline resilience, tool use, voice interaction, camera understanding, and sensor context in one assistant for blind and low-vision users.
