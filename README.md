@@ -201,6 +201,8 @@ On first launch, the app asks for:
 
 The app downloads the offline model before entering the main chat experience. This ensures the assistant can still work when the user loses internet access later.
 
+After the app opens, say `Lumos` to activate the assistant. Once it hears this wake phrase, it starts listening for your request.
+
 ## Model Pipeline
 
 The project includes notebooks for fine-tuning and converting Gemma models:
