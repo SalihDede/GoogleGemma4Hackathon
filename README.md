@@ -10,7 +10,7 @@ The goal is simple: a user should be able to ask natural questions like "What is
 
 You can try the Android build here:
 
-[Download LUMOS APK](https://drive.google.com/file/d/1JkmT24YhbLoFWN2OSwZIKxdYIFYbF-dH/view?usp=sharing)
+[Download LUMOS APK](https://drive.google.com/file/d/1Osimks1Mo07oaWEiqBjMwDBtm8iBf0_A/view?usp=sharing)
 
 ## Why LUMOS Matters
 
